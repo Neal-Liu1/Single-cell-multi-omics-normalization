@@ -1,0 +1,80 @@
+---
+title: "WNN CITE seq & 10x Multiome"
+author: "Neal Liu"
+date: "2024-02-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries & our own helper functions
+
+```{r}
+
+library(Seurat)
+library(SeuratData)
+library(cowplot)
+library(dplyr)
+library(Signac)
+library(EnsDb.Hsapiens.v86)
+
+source('Helper_functions.R')
+
+# Code for fixing the weird glpk.h not found error when installing Seurat
+# Sys.setenv(LIBRARY_PATH = "/stornext/System/data/tools/glpk/glpk-4.65/lib:$LIBRARY_PATH")
+# Sys.setenv(CPATH = "/stornext/System/data/tools/glpk/glpk-4.65/include:$CPATH")
+# Sys.setenv(LD_LIBRARY_PATH = "/stornext/System/data/tools/glpk/glpk-4.65/lib:$LD_LIBRARY_PATH")
+
+
+```
+
+Get the bone marrow CITEseq data from seurat and 10x multiome RNA+ATAC data on the VAST scratch on the HPC
+
+```{r}
+SeuratData::InstallData("bmcite", destdir = '/vast/scratch/users/liu.ne')
+bm_data <- LoadData(ds = "bmcite")
+multiome_data <- Read10X_h5("/vast/scratch/users/liu.ne/pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5")
+
+```
+
+
+```{r}
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+remotes::install_github("mojaveazure/seurat-disk")
+library(SeuratDisk)
+loom_data <- SeuratDisk::Connect(filename = "/vast/scratch/users/liu.ne/l5_all.loom", mode = 'r')
+mouse_cortex_data <- as.Seurat(loom_data)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
