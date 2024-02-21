@@ -41,11 +41,49 @@ multiome_data <- Read10X_h5("/vast/scratch/users/liu.ne/pbmc_granulocyte_sorted_
 
 
 ```{r}
+DefaultAssay(bm_data) <- 'RNA'
+bm_data <- NormalizeData(bm_data) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA()
+```
 
 
+```{r}
+DefaultAssay(bm_data) <- 'ADT'
+# we will use all ADT features for dimensional reduction
+# we set a dimensional reduction name to avoid overwriting the 
+VariableFeatures(bm_data) <- rownames(bm_data[["ADT"]])
+bm_data <- NormalizeData(bm_data, normalization.method = 'CLR', margin = 2) %>% 
+  ScaleData() %>% RunPCA(reduction.name = 'apca')
+
+```
+
+```{r}
+# Identify multimodal neighbors. These will be stored in the neighbors slot, 
+# and can be accessed using bm[['weighted.nn']]
+# The WNN graph can be accessed at bm[["wknn"]], 
+# and the SNN graph used for clustering at bm[["wsnn"]]
+# Cell-specific modality weights can be accessed at bm$RNA.weight
+bm_data <- FindMultiModalNeighbors(
+  bm_data, reduction.list = list("pca", "apca"), 
+  dims.list = list(1:30, 1:18), modality.weight.name = "RNA.weight"
+)
+
+```
+
+```{r}
+bm_data <- RunUMAP(bm_data, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+bm_data <- FindClusters(bm_data, graph.name = "wsnn", algorithm = 3, resolution = 2, verbose = FALSE)
+
+```
+
+```{r}
+
+p1 <- DimPlot(bm_data, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 2.5) + NoLegend()
+p2 <- DimPlot(bm_data, reduction = 'wnn.umap', group.by = 'celltype.l2', label = TRUE, repel = TRUE, label.size = 2.5) + NoLegend()
+p1 + p2
 
 
 ```
+
 
 
 
