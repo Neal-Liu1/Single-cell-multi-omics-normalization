@@ -19,6 +19,7 @@ library(cowplot)
 library(dplyr)
 library(Signac)
 library(EnsDb.Hsapiens.v86)
+library(ggplot2)
 
 source('Helper_functions.R')
 
@@ -75,14 +76,66 @@ bm_data <- FindClusters(bm_data, graph.name = "wsnn", algorithm = 3, resolution 
 
 ```
 
-```{r}
+```{r, fig.width= 10}
 
-p1 <- DimPlot(bm_data, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 2.5) + NoLegend()
-p2 <- DimPlot(bm_data, reduction = 'wnn.umap', group.by = 'celltype.l2', label = TRUE, repel = TRUE, label.size = 2.5) + NoLegend()
+p1 <- DimPlot(bm_data, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 2.5) + 
+  theme_minimal() +
+  labs(title = 'Clusters?') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)+
+  NoLegend()
+p2 <- DimPlot(bm_data, reduction = 'wnn.umap', group.by = 'celltype.l2', label = TRUE, repel = TRUE, label.size = 2.5) + 
+  theme_minimal() +
+  labs(title = 'Cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05) +
+  NoLegend()
+
 p1 + p2
 
 
 ```
+
+```{r}
+bm_data <- RunUMAP(bm_data, reduction = 'pca', dims = 1:30, assay = 'RNA', 
+              reduction.name = 'rna.umap', reduction.key = 'rnaUMAP_')
+bm_data <- RunUMAP(bm_data, reduction = 'apca', dims = 1:18, assay = 'ADT', 
+              reduction.name = 'adt.umap', reduction.key = 'adtUMAP_')
+
+```
+
+```{r, fig.width= 10}
+p3 <- DimPlot(bm_data, reduction = 'rna.umap', group.by = 'celltype.l2', label = TRUE, 
+              repel = TRUE, label.size = 2.5) + 
+  theme_minimal() +
+  labs(title = 'RNA cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)+
+  NoLegend()
+p4 <- DimPlot(bm_data, reduction = 'adt.umap', group.by = 'celltype.l2', label = TRUE, 
+              repel = TRUE, label.size = 2.5) + 
+  theme_minimal() +
+  labs(title = 'ADT cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)+
+  NoLegend()
+p3 + p4
+
+```
+
+
+
+
+
+
 
 
 
@@ -101,7 +154,6 @@ remotes::install_github("mojaveazure/seurat-disk")
 library(SeuratDisk)
 loom_data <- SeuratDisk::Connect(filename = "/vast/scratch/users/liu.ne/l5_all.loom", mode = 'r')
 mouse_cortex_data <- as.Seurat(loom_data)
-
 
 
 ```
