@@ -17,17 +17,8 @@ library(Seurat)
 library(SeuratData)
 library(cowplot)
 library(dplyr)
-library(Signac)
-library(EnsDb.Hsapiens.v86)
 library(ggplot2)
-
 source('Helper_functions.R')
-
-# Code for fixing the weird glpk.h not found error when installing Seurat
-# Sys.setenv(LIBRARY_PATH = "/stornext/System/data/tools/glpk/glpk-4.65/lib:$LIBRARY_PATH")
-# Sys.setenv(CPATH = "/stornext/System/data/tools/glpk/glpk-4.65/include:$CPATH")
-# Sys.setenv(LD_LIBRARY_PATH = "/stornext/System/data/tools/glpk/glpk-4.65/lib:$LD_LIBRARY_PATH")
-
 
 ```
 
@@ -109,6 +100,7 @@ bm_data <- RunUMAP(bm_data, reduction = 'apca', dims = 1:18, assay = 'ADT',
 ```
 
 ```{r, fig.width= 10}
+
 p3 <- DimPlot(bm_data, reduction = 'rna.umap', group.by = 'celltype.l2', label = TRUE, 
               repel = TRUE, label.size = 2.5) + 
   theme_minimal() +
@@ -132,31 +124,30 @@ p3 + p4
 ```
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ```{r}
-remotes::install_github("mojaveazure/seurat-disk")
-library(SeuratDisk)
-loom_data <- SeuratDisk::Connect(filename = "/vast/scratch/users/liu.ne/l5_all.loom", mode = 'r')
-mouse_cortex_data <- as.Seurat(loom_data)
+
+
 
 
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
