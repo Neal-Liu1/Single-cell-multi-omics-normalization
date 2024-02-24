@@ -19,18 +19,19 @@ library(cowplot)
 library(dplyr)
 library(ggplot2)
 library(tiltedCCA)
+library(devtools)
 
 # load our helper functions from github
-devtools::source_url('https://github.com/Neal-Liu1/Multi-omics-integration/blob/main/Helper_functions.R')
+devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
 
 ```
 
 Get the bone marrow CITEseq data from seurat and 10x multiome RNA+ATAC data on the VAST scratch on the HPC
 
 ```{r}
-SeuratData::InstallData("bmcite", destdir = '/vast/scratch/users/liu.ne')
+# SeuratData::InstallData("bmcite", destdir = '/vast/scratch/users/liu.ne')
 bm_data <- LoadData(ds = "bmcite")
-multiome_data <- Read10X_h5("/vast/scratch/users/liu.ne/pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5")
+# multiome_data <- Read10X_h5("/vast/scratch/users/liu.ne/pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5")
 
 ```
 
@@ -126,7 +127,43 @@ p3 + p4
 
 ```
 
-To benchmark with other methods such as totalVI (which is written in python), we need to use the reticulate package to operate python in R. 
+```{r, fig.width= 10}
+
+p5 <- FeaturePlot(bm_data, features = c("adt_CD45RA","adt_CD16","adt_CD161"),
+                  reduction = 'wnn.umap', max.cutoff = 2, 
+                  cols = c("darkblue","yellow"), ncol = 3)
+p6 <- FeaturePlot(bm_data, features = c("rna_TRDC","rna_MPO","rna_AVP"), 
+                  reduction = 'wnn.umap', max.cutoff = 3, ncol = 3)
+p5 / p6
+
+```
+
+```{r, fig.width= 9}
+ VlnPlot(bm_data, features = "RNA.weight", group.by = 'celltype.l2', sort = TRUE, pt.size = 0.1) +
+  NoLegend()
+
+```
+
+```{r}
+compute_silhouette(bm_data@reductions$rna.umap@cell.embeddings, bm_data@meta.data$celltype.l2, result_format = 'plot') +
+  labs(title = 'Silhouette coef. of RNA UMAP per cell type')
+
+```
+
+```{r}
+compute_silhouette(bm_data@reductions$adt.umap@cell.embeddings, bm_data@meta.data$celltype.l2, result_format = 'plot') +
+  labs(title = 'Silhouette coef. of ADT UMAP per cell type')
+
+```
+
+```{r}
+compute_silhouette(bm_data@reductions$wnn.umap@cell.embeddings, bm_data@meta.data$celltype.l2, result_format = 'plot') +
+  labs(title = 'Silhouette coef. of WNN UMAP per cell type')
+
+```
+
+
+To benchmark with other methods such as totalVI, we need to use the reticulate package to operate python in R. 
 
 ```{r}
 library(reticulate)
