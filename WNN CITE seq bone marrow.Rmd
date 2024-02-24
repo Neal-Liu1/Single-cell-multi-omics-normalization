@@ -18,7 +18,10 @@ library(SeuratData)
 library(cowplot)
 library(dplyr)
 library(ggplot2)
-source('Helper_functions.R')
+library(tiltedCCA)
+
+# load our helper functions from github
+devtools::source_url('https://github.com/Neal-Liu1/Multi-omics-integration/blob/main/Helper_functions.R')
 
 ```
 
@@ -71,7 +74,7 @@ bm_data <- FindClusters(bm_data, graph.name = "wsnn", algorithm = 3, resolution 
 
 p1 <- DimPlot(bm_data, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 2.5) + 
   theme_minimal() +
-  labs(title = 'Clusters?') +
+  labs(title = 'Clusters') +
   theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
           panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
           panel.grid.major = element_line(color = "grey96"),
@@ -123,31 +126,20 @@ p3 + p4
 
 ```
 
+To benchmark with other methods such as totalVI (which is written in python), we need to use the reticulate package to operate python in R. 
+
+```{r}
+library(reticulate)
+library(anndata)
+library(sceasy)
+
+```
 
 ```{r}
 
 
 
-
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
