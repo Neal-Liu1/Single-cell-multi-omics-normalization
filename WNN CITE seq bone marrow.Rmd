@@ -18,20 +18,23 @@ library(SeuratData)
 library(cowplot)
 library(dplyr)
 library(ggplot2)
-library(tiltedCCA)
 library(devtools)
 
 # load our helper functions from github
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
 
+# devtools::install_github("sqjin/scAI")
+library(scAI)
+library(tiltedCCA)
+library(MOFA2)
+
 ```
 
-Get the bone marrow CITEseq data from seurat and 10x multiome RNA+ATAC data on the VAST scratch on the HPC
+Get the bone marrow CITEseq data from seurat on the VAST scratch on the HPC
 
 ```{r}
 # SeuratData::InstallData("bmcite", destdir = '/vast/scratch/users/liu.ne')
 bm_data <- LoadData(ds = "bmcite")
-# multiome_data <- Read10X_h5("/vast/scratch/users/liu.ne/pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5")
 
 ```
 
@@ -131,7 +134,7 @@ p3 + p4
 
 p5 <- FeaturePlot(bm_data, features = c("adt_CD45RA","adt_CD16","adt_CD161"),
                   reduction = 'wnn.umap', max.cutoff = 2, 
-                  cols = c("darkblue","yellow"), ncol = 3)
+                  cols = c("grey","darkgreen"), ncol = 3)
 p6 <- FeaturePlot(bm_data, features = c("rna_TRDC","rna_MPO","rna_AVP"), 
                   reduction = 'wnn.umap', max.cutoff = 3, ncol = 3)
 p5 / p6
@@ -162,6 +165,67 @@ compute_silhouette(bm_data@reductions$wnn.umap@cell.embeddings, bm_data@meta.dat
 
 ```
 
+```{r}
+
+bm_mofa <- MOFA2::create_mofa_from_Seurat(bm_data, 
+                                          groups = NULL, 
+                                          assays = c('RNA', 'ADT'),
+                                          features = list(bm_data@assays$RNA@features@.Data,
+                                                          bm_data@assays$ADT@features@.Data))
+
+# need to use stochastic variational inference since our data is too big.
+params <- MOFA2::get_default_training_options(bm_mofa)
+params$stochastic <- T
+
+bm_mofa <- MOFA2::prepare_mofa(bm_mofa, training_options = params)
+bm_mofa <- MOFA2::run_mofa(bm_mofa, use_basilisk = T)
+
+# saving the MOFA obj onto vast since this took 1.5hrs to finish
+
+saveRDS(bm_mofa, file = '/vast/scratch/users/liu.ne/bm_mofa_all_features.rds')
+
+```
+
+```{r}
+p1 <- MOFA2::plot_variance_explained(bm_mofa)
+
+p1
+
+```
+
+Now run UMAP on the MOFA factors and plot
+
+```{r}
+
+bm_data <- MOFA2::add_mofa_factors_to_seurat(mofa_object = bm_mofa, seurat_object =  bm_data, 
+                                  views = 'all', factors = 'all')
+
+bm_data <- RunUMAP(bm_data, reduction = 'MOFA', dims = c(1:25)[-9], reduction.name = 'MOFA_UMAP')
+
+```
+
+```{r, fig.width= 9}
+
+DimPlot(bm_data, reduction = 'MOFA_UMAP', group.by = 'celltype.l2', label = T,
+                      repel = TRUE, label.size = 2.5) + 
+  theme_minimal() +
+  labs(title = 'MOFA cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05) +
+  NoLegend()
+
+
+```
+
+```{r}
+compute_silhouette(bm_data@reductions$MOFA_UMAP@cell.embeddings, bm_data@meta.data$celltype.l2, 
+                   result_format = 'plot')
+
+
+```
+
 
 To benchmark with other methods such as totalVI, we need to use the reticulate package to operate python in R. 
 
@@ -170,13 +234,24 @@ library(reticulate)
 library(anndata)
 library(sceasy)
 
+# pip install scvi
+# pip install scanpy
+
+# reticulate::py_install('scvi')
+# reticulate::py_install('scanpy')
+
+
+reticulate::conda_install(packages = 'scanpy')
+reticulate::conda_install(packages = 'scvi-tools')
+
+scanpy <- reticulate::import_from_path('scanpy', path = "/stornext/System/data/apps/miniconda3/miniconda3-latest/bin/conda",
+                                       convert = F)
+
+scvi <- reticulate::import('scvi-tools', convert = F)
+
+
 ```
 
-```{r}
-
-
-
-```
 
 
 
