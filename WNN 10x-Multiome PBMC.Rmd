@@ -1,0 +1,40 @@
+---
+title: "10x multiome PMBC"
+author: "Neal Liu"
+date: "2024-02-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(Seurat)
+library(SeuratData)
+library(cowplot)
+library(dplyr)
+library(ggplot2)
+library(Signac)
+library(EnsDb.Hsapiens.v86)
+source('Helper_functions.R')
+
+```
+
+
+```{r}
+multiome_data <- Read10X_h5("/vast/scratch/users/liu.ne/pbmc_granulocyte_sorted_10k_filtered_feature_bc_matrix.h5")
+
+```
+
+```{r}
+
+
+
+```
+
+
+
+
+
