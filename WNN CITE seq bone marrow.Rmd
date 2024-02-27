@@ -182,7 +182,9 @@ bm_mofa <- MOFA2::run_mofa(bm_mofa, use_basilisk = T)
 
 # saving the MOFA obj onto vast since this took 1.5hrs to finish
 
-saveRDS(bm_mofa, file = '/vast/scratch/users/liu.ne/bm_mofa_all_features.rds')
+# saveRDS(bm_mofa, file = '/vast/scratch/users/liu.ne/bm_mofa_all_features.rds')
+
+bm_mofa <- readRDS('/vast/scratch/users/liu.ne/bm_mofa_all_features.rds')
 
 ```
 
@@ -234,21 +236,23 @@ library(reticulate)
 library(anndata)
 library(sceasy)
 
-# pip install scvi
-# pip install scanpy
+
+# all this will fail on the hpc. it is futile.
 
 # reticulate::py_install('scvi')
 # reticulate::py_install('scanpy')
 
 
-reticulate::conda_install(packages = 'scanpy')
-reticulate::conda_install(packages = 'scvi-tools')
+# reticulate::conda_install(packages = 'scanpy')
+# reticulate::conda_install(packages = 'scvi-tools')
 
-scanpy <- reticulate::import_from_path('scanpy', path = "/stornext/System/data/apps/miniconda3/miniconda3-latest/bin/conda",
-                                       convert = F)
+# scanpy <- reticulate::import_from_path('scanpy', path = "/stornext/System/data/apps/miniconda3/miniconda3-latest/bin/conda",
+#                                       convert = F)
 
-scvi <- reticulate::import('scvi-tools', convert = F)
+# scvi <- reticulate::import('scvi-tools', convert = F)
 
+SeuratDisk::SaveH5Seurat(bm_data, filename = '/vast/scratch/users/liu.ne/bm_data.h5Seurat')
+SeuratDisk::Convert(source = '/vast/scratch/users/liu.ne/bm_data.h5Seurat', dest = '/vast/scratch/users/liu.ne/bm_anndata.h5ad')
 
 ```
 
