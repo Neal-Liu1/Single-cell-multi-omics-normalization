@@ -235,27 +235,148 @@ To benchmark with other methods such as totalVI, we need to use the reticulate p
 library(reticulate)
 library(anndata)
 library(sceasy)
+library(SeuratDisk)
 
-
-# all this will fail on the hpc. it is futile.
+# devtools::install_github("cellgeni/sceasy")
+# use_condaenv('scMultiOmics_normalization')
+# reticulate::conda_install(envname = 'scMultiOmics_normalization', packages = 'loompy')
+# loompy <- reticulate::import('loompy')
 
 # reticulate::py_install('scvi')
 # reticulate::py_install('scanpy')
-
-
 # reticulate::conda_install(packages = 'scanpy')
 # reticulate::conda_install(packages = 'scvi-tools')
-
-# scanpy <- reticulate::import_from_path('scanpy', path = "/stornext/System/data/apps/miniconda3/miniconda3-latest/bin/conda",
-#                                       convert = F)
-
+# scanpy <- reticulate::import_from_path('scanpy', path = "/stornext/System/data/apps/miniconda3/miniconda3-latest/bin/conda", convert = F)
 # scvi <- reticulate::import('scvi-tools', convert = F)
 
+# all this will fail on the hpc. it is futile.
+
+
+
+
+##### saving workspace image since this has given me so many crashes.
+# save.image(file='/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+
+##### load image
+# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+
+
+
+
 SeuratDisk::SaveH5Seurat(bm_data, filename = '/vast/scratch/users/liu.ne/bm_data.h5Seurat')
-SeuratDisk::Convert(source = '/vast/scratch/users/liu.ne/bm_data.h5Seurat', dest = '/vast/scratch/users/liu.ne/bm_anndata.h5ad')
+test <- SeuratDisk::Connect('/vast/scratch/users/liu.ne/bm_data.h5Seurat')
+
+SeuratDisk::Convert(source = '/vast/scratch/users/liu.ne/bm_data.h5Seurat', 
+                    dest = 'h5ad')
+
+Seurat::DefaultAssay(bm_data) <- 'RNA'
+bm_data <- Seurat::MetaFeature(bm_data, features = c('RBP7', "ATPIF1"))
+
+sceasy::convertFormat(bm_data, from = 'seurat', to = 'anndata',
+                      outFile = '/vast/scratch/users/liu.ne/bm_data.h5ad')
 
 ```
 
+Trying to run tilted-CCA
+
+```{r}
+rna_matrix <- Matrix::t(bm_data[['RNA']]$scale.data)
+adt_matrix <- Matrix::t(bm_data[['ADT']]$scale.data)
+
+set.seed(10)
+multi_SVD <- tiltedCCA::create_multiSVD(mat_1 = rna_matrix, mat_2 = adt_matrix, 
+                                        dims_1 = 1:30, dims_2 = 1:18,
+                                        scale_1 = F, scale_2 = F)
+
+Seurat::DefaultAssay(bm_data) <- 'RNA'
+bm_data <- Seurat::FindNeighbors(bm_data, reduction = 'pca', dims = 1:30, return.neighbor = T)
+bm_data <- Seurat::FindClusters(bm_data, graph.name = 'RNA_snn', resolution = 0.25)
+Seurat::DefaultAssay(bm_data) <- 'ADT'
+bm_data <- Seurat::FindNeighbors(bm_data, reduction = 'apca', dims = 1:18, return.neighbor = T)
+bm_data <- Seurat::FindClusters(bm_data, graph.name = 'ADT_snn', resolution = 0.25)
+
+
+multi_SVD <- tiltedCCA::form_metacells(multi_SVD,
+                                       large_clustering_1 = bm_data$RNA_snn_res.0.25,
+                                       large_clustering_2 = bm_data$ADT_snn_res.0.25)
+
+multi_SVD <- tiltedCCA::compute_snns(multi_SVD, num_neigh = 30, latent_k = 20)
+
+multi_SVD <- tiltedCCA::tiltedCCA(multi_SVD, verbose = 1)
+
+# This part takes VERY long (more than 6 hours). 
+# This is when the components are actually tilted
+multi_SVD <- tiltedCCA::fine_tuning(multi_SVD, verbose = 1) |> tiltedCCA_decomposition(verbose = 1)
+
+saveRDS(multi_SVD, file = '/vast/scratch/users/liu.ne/bm_CITEseq_tiltedCCA.rds')
+save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+
+```
+
+```{r}
+bm_data[['tcca_common']] <- tiltedCCA::create_SeuratDim(multi_SVD, what = 'common', seurat_obj = bm_data, 
+                                                        aligned_umap_assay = 'MOFA_UMAP', verbose = 1)
+
+bm_data[['tcca_distinct_rna']] <- tiltedCCA::create_SeuratDim(multi_SVD, what = 'distinct_1', seurat_obj = bm_data, 
+                                                        aligned_umap_assay = 'MOFA_UMAP', verbose = 1)
+
+bm_data[['tcca_distinct_adt']] <- tiltedCCA::create_SeuratDim(multi_SVD, what = 'distinct_2', seurat_obj = bm_data, 
+                                                        aligned_umap_assay = 'MOFA_UMAP', verbose = 1, seurat_assay = 'ADT')
+
+```
+
+```{r, fig.width= 10}
+
+DimPlot(bm_data, reduction = 'tcca_common', group.by = 'celltype.l2', label = T, repel = T, label.size = 2.5)+
+  theme_minimal() +
+  labs(title = 't-CCA common cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05) +
+  NoLegend()
+
+```
+
+```{r}
+compute_silhouette(bm_data[['tcca_common']]@cell.embeddings, label_vector = bm_data$celltype.l2, result_format = 'plot')
+
+```
+
+
+
+
+```{r, fig.width= 10}
+
+p1 <- DimPlot(bm_data, reduction = 'tcca_distinct_rna', group.by = 'celltype.l2', label = T, repel = T, label.size = 2.5)+
+  theme_minimal() +
+  labs(title = 't-CCA RNA distinct cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05) +
+  NoLegend()
+
+p2 <- DimPlot(bm_data, reduction = 'tcca_distinct_adt', group.by = 'celltype.l2', label = T, repel = T, label.size = 2.5)+
+  theme_minimal() +
+  labs(title = 't-CCA ADT distinct cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05) +
+  NoLegend()
+
+p1 + p2
+
+```
+
+```{r}
+compute_silhouette(bm_data[['tcca_distinct_rna']]@cell.embeddings, label_vector = bm_data$celltype.l2, result_format = 'plot')
+```
+```{r}
+compute_silhouette(bm_data[['tcca_distinct_adt']]@cell.embeddings, label_vector = bm_data$celltype.l2, result_format = 'plot')
+
+```
 
 
 
