@@ -305,11 +305,10 @@ multi_SVD <- tiltedCCA::compute_snns(multi_SVD, num_neigh = 30, latent_k = 20)
 multi_SVD <- tiltedCCA::tiltedCCA(multi_SVD, verbose = 1)
 
 # This part takes VERY long (more than 6 hours). 
-# This is when the components are actually tilted
 multi_SVD <- tiltedCCA::fine_tuning(multi_SVD, verbose = 1) |> tiltedCCA_decomposition(verbose = 1)
 
 saveRDS(multi_SVD, file = '/vast/scratch/users/liu.ne/bm_CITEseq_tiltedCCA.rds')
-save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+
 
 ```
 
@@ -378,7 +377,62 @@ compute_silhouette(bm_data[['tcca_distinct_adt']]@cell.embeddings, label_vector 
 
 ```
 
+```{r, fig.width= 8}
 
+library(parallel)
+
+all_silhouette_scores <- parallel::mclapply(list(bm_data@reductions$rna.umap@cell.embeddings,
+                                  bm_data@reductions$adt.umap@cell.embeddings,
+                                  bm_data@reductions$wnn.umap@cell.embeddings,
+                                  bm_data@reductions$MOFA_UMAP@cell.embeddings,
+                                  bm_data[['tcca_common']]@cell.embeddings, 
+                                  bm_data[['tcca_distinct_rna']]@cell.embeddings, 
+                                  bm_data[['tcca_distinct_adt']]@cell.embeddings), 
+                             function(x){compute_silhouette(matrix = x, label_vector = bm_data$celltype.l2, 
+                                                            result_format = 'per_cluster')})
+
+all_silhouette_scores <- do.call(rbind, all_silhouette_scores)
+all_silhouette_scores$algorithm <- rep(c('raw_RNA', 'raw_ADT', 'WNN', 'MOFA', 't-CCA_common', 't-CCA_unique_RNA', 't-CCA_unique_ADT'), each = 27)
+
+plot_boxplot_categorical(all_silhouette_scores$silhouette_score, all_silhouette_scores$algorithm, names = c('sihouette score', 'algorithm')) +
+  theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
+
+```
+
+```{r, fig.width= 8}
+# install.packages('ggbeeswarm')
+library(ggbeeswarm)
+
+plot_violin(all_silhouette_scores$silhouette_score, all_silhouette_scores$algorithm, names = c('silhouette','algorithm')) + 
+  coord_cartesian(ylim = c(-1, 1.4))
+
+```
+
+
+
+```{r}
+# devtools::install_github("immunogenomics/lisi")
+library(lisi)
+
+LISI_scores <- compute_lisi(bm_data@reductions$pca@cell.embeddings[,1:20], 
+                            meta_data = bm_data@meta.data, 
+                            label_colnames = c('lane', 'donor', 'celltype.l2')) |> cbind.data.frame(dplyr::select(bm_data@meta.data, c('lane', 'donor', 'celltype.l2')))
+
+colnames(LISI_scores) <- c('lane_score', 'donor_score', 'celltype_score', 'lane', 'donor', 'celltype')
+
+```
+
+```{r, fig.width= 12}
+plot_violin(LISI_scores$donor_score, LISI_scores$donor, c('LISI for lane', 'lane'), overlay_type = 'boxplot')
+
+```
+
+```{r}
+# save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+
+
+```
 
 
 
