@@ -28,6 +28,23 @@ library(scAI)
 library(tiltedCCA)
 library(MOFA2)
 
+# ADT normalization (ADTnorm, DSB, CLR)
+remotes::install_github("yezhengSTAT/ADTnorm")
+library(ADTnorm)
+library(dsb)
+# for CLR
+library(compositions)
+# benchmark ARI, silhouette with umap, vector correlation w pca,
+
+
+# for RNA normalization:
+# Seurat sctransform, CCA, RPCA
+# LIGER
+# FastMNN
+# Harmony
+
+
+
 ```
 
 Get the bone marrow CITEseq data from seurat on the VAST scratch on the HPC
@@ -252,17 +269,6 @@ library(SeuratDisk)
 # all this will fail on the hpc. it is futile.
 
 
-
-
-##### saving workspace image since this has given me so many crashes.
-# save.image(file='/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
-
-##### load image
-# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
-
-
-
-
 SeuratDisk::SaveH5Seurat(bm_data, filename = '/vast/scratch/users/liu.ne/bm_data.h5Seurat')
 test <- SeuratDisk::Connect('/vast/scratch/users/liu.ne/bm_data.h5Seurat')
 
@@ -427,12 +433,42 @@ plot_violin(LISI_scores$donor_score, LISI_scores$donor, c('LISI for lane', 'lane
 
 ```
 
-```{r}
+```{r, fig.width= 12}
 # save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 # load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 
+adt_plot_data <- tidyr::pivot_longer(as.data.frame(bm_data@assays$ADT@layers$scale.data), 
+                                     cols = everything())
+adt_plot_data$cell_labels <- rep(bm_data$celltype.l2, 25)
+
+plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype'))
 
 ```
+
+```{r, fig.width= 12}
+adt_plot_data <- ADTnorm::arcsinh_transform(t(as.matrix(bm_data@assays$ADT@layers$counts))) %>% as.data.frame () %>% tidyr::pivot_longer(cols = everything())
+
+adt_plot_data$cell_labels <- rep(bm_data$celltype.l2, 25)
+
+plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype'))
+
+```
+
+```{r}
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
 
 
 
