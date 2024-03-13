@@ -19,6 +19,7 @@ library(cowplot)
 library(dplyr)
 library(ggplot2)
 library(devtools)
+library(umap)
 
 # load our helper functions from github
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
@@ -29,7 +30,7 @@ library(tiltedCCA)
 library(MOFA2)
 
 # ADT normalization (ADTnorm, DSB, CLR)
-remotes::install_github("yezhengSTAT/ADTnorm")
+# remotes::install_github("yezhengSTAT/ADTnorm")
 library(ADTnorm)
 library(dsb)
 # for CLR
@@ -268,18 +269,15 @@ library(SeuratDisk)
 
 # all this will fail on the hpc. it is futile.
 
+# BiocManager::install("zellkonverter", force = T)
+library(zellkonverter)
 
-SeuratDisk::SaveH5Seurat(bm_data, filename = '/vast/scratch/users/liu.ne/bm_data.h5Seurat')
-test <- SeuratDisk::Connect('/vast/scratch/users/liu.ne/bm_data.h5Seurat')
+test <- Seurat::as.SingleCellExperiment(bm_data)
+DefaultAssay(bm_data) <- 'RNA'
+test1 <- Seurat::as.SingleCellExperiment(bm_data)
+zellkonverter::writeH5AD(test, file = '/vast/scratch/users/liu.ne/bm_ADT.h5ad')
+zellkonverter::writeH5AD(test1, file = '/vast/scratch/users/liu.ne/bm_RNA.h5ad')
 
-SeuratDisk::Convert(source = '/vast/scratch/users/liu.ne/bm_data.h5Seurat', 
-                    dest = 'h5ad')
-
-Seurat::DefaultAssay(bm_data) <- 'RNA'
-bm_data <- Seurat::MetaFeature(bm_data, features = c('RBP7', "ATPIF1"))
-
-sceasy::convertFormat(bm_data, from = 'seurat', to = 'anndata',
-                      outFile = '/vast/scratch/users/liu.ne/bm_data.h5ad')
 
 ```
 
@@ -439,7 +437,7 @@ plot_violin(LISI_scores$donor_score, LISI_scores$donor, c('LISI for lane', 'lane
 
 adt_plot_data <- tidyr::pivot_longer(as.data.frame(bm_data@assays$ADT@layers$scale.data), 
                                      cols = everything())
-adt_plot_data$cell_labels <- rep(bm_data$celltype.l2, 25)
+adt_plot_data$cell_labels <- rep(bm_data$celltype.l2, each = 25)
 
 plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype'))
 
@@ -454,7 +452,166 @@ plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype')
 
 ```
 
+```{r, fig.height= 10, fig.width= 9}
+library(ggridges)
+
+adt_arcsinh_data <- ADTnorm::arcsinh_transform((as.matrix(bm_data@assays$ADT@layers$counts)) %>% as.data.frame())
+rownames(adt_arcsinh_data) <- bm_data@assays$ADT@meta.data$var.features
+
+p <- plot_ridgeplot(matrix= adt_arcsinh_data[c('CD8'),], label_vector = bm_data$celltype.l2)
+
+p
+
+```
+
+
 ```{r}
+library(matlib)
+a <- as.matrix(adt_matrix[1:30, 1:7])
+
+View((t(a) %*% a))
+
+View(inv(t(a) %*% a))
+
+
+```
+
+
+```{r}
+
+
+plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/1.1, run_umap = T, label_is_continuous = F, 
+                      continuous_var_upper_lim = NULL){
+  # taking a matrix and a vector of metadata, plot UMAP of the matrix colored by the groups in the metadata vector
+  
+  if(run_umap){
+  umap_result = umap(t(matrix))
+  df = data.frame(umap_result$layout)}
+  if(!run_umap){df <- as.data.frame(matrix)}
+  colnames(df) = c("UMAP1", "UMAP2")
+  
+  if(!is.null(continuous_var_upper_lim)){
+    if(class(continuous_var_upper_lim) != 'numeric'){stop("You didn't enter a numerical value for the continous variable uppe limit. Please only enter numbers.")}
+    else(metadata_vector <- lapply(metadata_vector,
+                                   function(x) ifelse(x > continuous_var_upper_lim,
+                                                      continuous_var_upper_lim,
+                                                      x)) %>% unlist())}
+  
+  df$metadata = metadata_vector 
+  
+  if(!label_is_continuous){
+  ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
+    geom_point(size = 0.07) +
+    ggtitle(title) +
+    theme_minimal() +
+    theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = aspect_ratio)
+  }
+  if(label_is_continuous){
+    ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
+    geom_point(size = 0.07) +
+    scale_fill_viridis() +
+    scale_color_viridis() +
+    ggtitle(title) +
+    theme_minimal() +
+    theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)
+  }
+  
+}
+
+```
+
+
+```{r, fig.width= 9}
+# Normalize with ADTnorm, CLR & DSB
+adt_data <- as.matrix(bm_data@assays$ADT@layers$counts)
+rownames(adt_data) <- bm_data@assays$ADT@meta.data$var.features
+
+adt_counts_umap <- umap(t(adt_data))$layout %>% as.data.frame()
+
+plot_UMAP(adt_counts_umap, metadata_vector = bm_data$celltype.l2, title = 'UMAP of ADT raw counts', run_umap = F)
+
+
+```
+
+```{r}
+
+df <- adt_counts_umap
+df$metadata <- bm_data$nCount_RNA
+
+lim = 4000
+df$metadata <- lapply(df$metadata, function(x) ifelse(x > lim, lim, x)) %>% unlist()
+
+
+ggplot(df, aes(x = V1, y = V2, color = metadata)) +
+    geom_point(size = 0.07) +
+    scale_fill_viridis() +
+    scale_color_viridis() +
+    ggtitle('UMAP ADT raw counts with RNA libsize') +
+    theme_minimal() +
+    theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)
+
+
+```
+```{r}
+df <- adt_counts_umap
+df$metadata <- bm_data$nCount_ADT
+
+lim = 10000
+df$metadata <- lapply(df$metadata, function(x) ifelse(x > lim, lim, x)) %>% unlist()
+
+plot_UMAP(df, bm_data$nCount_ADT, title = 'UMAP ADT raw counts with total ADT counts', 
+          run_umap = F, label_is_continuous = T, continuous_var_upper_lim = 10000)
+
+```
+
+
+
+
+```{r}
+
+compute_silhouette((adt_data), run_dim_reduction = 'umap', bm_data$celltype.l2, result_format = 'plot') +
+  ggtitle('ADT raw counts')
+
+
+```
+
+
+
+
+
+```{r}
+
+compute_silhouette((bm_data@assays$ADT$data), run_dim_reduction = 'umap', bm_data$celltype.l2, result_format = 'plot') +
+  ggtitle('ADT CLR')
+
+
+```
+
+
+
+```{r}
+adt_dsb <- dsb::ModelNegativeADTnorm(t(adt_data), use.isotype.control = F)
+
+compute_silhouette(t(adt_dsb), run_dim_reduction = 'umap', bm_data$celltype.l2, result_format = 'plot') +
+  ggtitle('ADT DSB')
+
+```
+
+
+
+
+
+```{r, fig.width= 10}
+adt_adtnorm <- ADTnorm(t(adt_data), bm_data@meta.data)
 
 
 
@@ -464,16 +621,11 @@ plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype')
 
 
 
+```{r}
 
+test <- Seurat::Read10X_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_raw_feature_bc_matrix.h5')
 
-
-
-
-
-
-
-
-
+```
 
 
 
