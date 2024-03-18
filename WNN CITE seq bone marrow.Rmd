@@ -20,6 +20,7 @@ library(dplyr)
 library(ggplot2)
 library(devtools)
 library(umap)
+library(ggridges)
 
 # load our helper functions from github
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
@@ -433,7 +434,7 @@ plot_violin(LISI_scores$donor_score, LISI_scores$donor, c('LISI for lane', 'lane
 
 ```{r, fig.width= 12}
 # save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
-# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+ load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 
 adt_plot_data <- tidyr::pivot_longer(as.data.frame(bm_data@assays$ADT@layers$scale.data), 
                                      cols = everything())
@@ -446,7 +447,7 @@ plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype')
 ```{r, fig.width= 12}
 adt_plot_data <- ADTnorm::arcsinh_transform(t(as.matrix(bm_data@assays$ADT@layers$counts))) %>% as.data.frame () %>% tidyr::pivot_longer(cols = everything())
 
-adt_plot_data$cell_labels <- rep(bm_data$celltype.l2, 25)
+adt_plot_data$cell_labels <- rep(bm_data$celltype.l2, each = 25)
 
 plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype'))
 
@@ -458,94 +459,33 @@ library(ggridges)
 adt_arcsinh_data <- ADTnorm::arcsinh_transform((as.matrix(bm_data@assays$ADT@layers$counts)) %>% as.data.frame())
 rownames(adt_arcsinh_data) <- bm_data@assays$ADT@meta.data$var.features
 
-p <- plot_ridgeplot(matrix= adt_arcsinh_data[c('CD8'),], label_vector = bm_data$celltype.l2)
+p <- plot_ridgeplot(matrix= adt_arcsinh_data[,], label_vector = bm_data$donor)
 
 p
 
 ```
 
-
 ```{r}
-library(matlib)
-a <- as.matrix(adt_matrix[1:30, 1:7])
-
-View((t(a) %*% a))
-
-View(inv(t(a) %*% a))
-
-
-```
-
-
-```{r}
-
-
-plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/1.1, run_umap = T, label_is_continuous = F, 
-                      continuous_var_upper_lim = NULL){
-  # taking a matrix and a vector of metadata, plot UMAP of the matrix colored by the groups in the metadata vector
-  
-  if(run_umap){
-  umap_result = umap(t(matrix))
-  df = data.frame(umap_result$layout)}
-  if(!run_umap){df <- as.data.frame(matrix)}
-  colnames(df) = c("UMAP1", "UMAP2")
-  
-  if(!is.null(continuous_var_upper_lim)){
-    if(class(continuous_var_upper_lim) != 'numeric'){stop("You didn't enter a numerical value for the continous variable uppe limit. Please only enter numbers.")}
-    else(metadata_vector <- lapply(metadata_vector,
-                                   function(x) ifelse(x > continuous_var_upper_lim,
-                                                      continuous_var_upper_lim,
-                                                      x)) %>% unlist())}
-  
-  df$metadata = metadata_vector 
-  
-  if(!label_is_continuous){
-  ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
-    geom_point(size = 0.07) +
-    ggtitle(title) +
-    theme_minimal() +
-    theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
-          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
-          panel.grid.major = element_line(color = "grey96"),
-          aspect.ratio = aspect_ratio)
-  }
-  if(label_is_continuous){
-    ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
-    geom_point(size = 0.07) +
-    scale_fill_viridis() +
-    scale_color_viridis() +
-    ggtitle(title) +
-    theme_minimal() +
-    theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
-          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
-          panel.grid.major = element_line(color = "grey96"),
-          aspect.ratio = 1/1.05)
-  }
-  
-}
-
-```
-
-
-```{r, fig.width= 9}
 # Normalize with ADTnorm, CLR & DSB
 adt_data <- as.matrix(bm_data@assays$ADT@layers$counts)
 rownames(adt_data) <- bm_data@assays$ADT@meta.data$var.features
 
 adt_counts_umap <- umap(t(adt_data))$layout %>% as.data.frame()
 
-plot_UMAP(adt_counts_umap, metadata_vector = bm_data$celltype.l2, title = 'UMAP of ADT raw counts', run_umap = F)
-
+p <- plot_UMAP(adt_counts_umap, metadata_vector = bm_data$celltype.l2, title = 'UMAP of ADT raw counts', run_umap = F, )
+p + labs(color = 'celltype l2')
 
 ```
 
 ```{r}
+library(viridis)
 
 df <- adt_counts_umap
 df$metadata <- bm_data$nCount_RNA
 
 lim = 4000
-df$metadata <- lapply(df$metadata, function(x) ifelse(x > lim, lim, x)) %>% unlist()
+df$metadata <- lapply(df$metadata, function(x) ifelse(x > lim, lim, x)) %>% unlist() %>% log2()
+
 
 
 ggplot(df, aes(x = V1, y = V2, color = metadata)) +
@@ -554,6 +494,7 @@ ggplot(df, aes(x = V1, y = V2, color = metadata)) +
     scale_color_viridis() +
     ggtitle('UMAP ADT raw counts with RNA libsize') +
     theme_minimal() +
+    labs(color = 'RNA Libsize (log2)') +
     theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
           panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
           panel.grid.major = element_line(color = "grey96"),
@@ -566,14 +507,13 @@ df <- adt_counts_umap
 df$metadata <- bm_data$nCount_ADT
 
 lim = 10000
-df$metadata <- lapply(df$metadata, function(x) ifelse(x > lim, lim, x)) %>% unlist()
+df$metadata <- lapply(df$metadata, function(x) ifelse(x > lim, lim, x)) %>% unlist() %>% log2()
 
-plot_UMAP(df, bm_data$nCount_ADT, title = 'UMAP ADT raw counts with total ADT counts', 
-          run_umap = F, label_is_continuous = T, continuous_var_upper_lim = 10000)
+plot_UMAP(df, df$metadata, title = 'UMAP ADT raw counts with total ADT counts', 
+          run_umap = F, label_is_continuous = T) +
+  labs(color = 'total ADT counts log2')
 
 ```
-
-
 
 
 ```{r}
@@ -607,14 +547,14 @@ compute_silhouette(t(adt_dsb), run_dim_reduction = 'umap', bm_data$celltype.l2, 
 ```
 
 
-
-
-
 ```{r, fig.width= 10}
-adt_adtnorm <- ADTnorm(t(adt_data), bm_data@meta.data)
+data <- t(adt_data)
+rownames(data) <- rownames(bm_data@meta.data)
+metadata <- bm_data@meta.data
+metadata$sample <- bm_data$donor
 
-
-
+adt_adtnorm <- ADTnorm(data, metadata, save_outpath = '/vast/scratch/users/liu.ne/')
+adt_adtnorm <- t(adt_adtnorm)
 
 ```
 
@@ -623,7 +563,62 @@ adt_adtnorm <- ADTnorm(t(adt_data), bm_data@meta.data)
 
 ```{r}
 
-test <- Seurat::Read10X_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_raw_feature_bc_matrix.h5')
+all_silhouette_scores <- parallel::mclapply(list((adt_data),
+                                                 (bm_data@assays$ADT@layers$data),
+                                                 t(adt_dsb),
+                                                 adt_adtnorm),
+                                            function(x){compute_silhouette(matrix = x, label_vector = bm_data$celltype.l2, run_dim_reduction = 'umap',
+                                                            result_format = 'per_cluster')})
+
+all_silhouette_scores <- do.call(rbind, all_silhouette_scores)
+all_silhouette_scores$algorithm <- rep(c('ADT_raw_counts', 'CLR', 'DSB', 'ADTnorm'), each = 27)
+
+plot_boxplot_categorical(all_silhouette_scores$silhouette_score, all_silhouette_scores$algorithm, names = c('Silhouette score', 'Method')) +
+  theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
+
+
+```
+
+```{r}
+plot_violin(all_silhouette_scores$silhouette_score, all_silhouette_scores$algorithm, names = c('Silhouette scores per cell type', 'Method')) +
+  theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
+
+
+```
+
+```{r}
+plot_ridgeplot(tidyr::pivot_wider(all_silhouette_scores, 
+                                   names_from = contains('algorithm'), 
+                                   values_from = where(is.numeric))[,6:9], 
+                label_vector = c('ADT_raw_counts', 'CLR', 'DSB', 'ADTnorm'),
+               title = 'Ridgeplot of silhouette coefficients for celltypes')
+
+
+```
+
+
+```{r}
+
+MALT_tumour_10k <- Seurat::Read10X_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_raw_feature_bc_matrix.h5')
+
+# weirdly enough, i think this is actually 6 million cells and 33k features (even has MIRs and ORFs???)
+
+# save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+
+
+```
+
+```{r}
+plot_vector_correlation(list(adt_data, bm_data@assays$ADT$data, t(adt_dsb), adt_adtnorm), c('adt raw counts', 'CLR', 'DSB', 'ADTnorm'), 
+                        bm_data$celltype.l2,'L2 celltype', is.pca.obj = F)
+
+
+```
+
+```{r}
+plot_linear_correlation(list(adt_data, bm_data@assays$ADT$data, t(adt_dsb), adt_adtnorm), c('adt raw counts', 'CLR', 'DSB', 'ADTnorm'), 
+                        bm_data$nCount_ADT,'ADT libsize', is.pca.obj = F)
 
 ```
 
