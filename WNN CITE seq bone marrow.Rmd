@@ -21,9 +21,12 @@ library(ggplot2)
 library(devtools)
 library(umap)
 library(ggridges)
+library(viridis)
 
 # load our helper functions from github
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
+
+set.seed(42)
 
 # devtools::install_github("sqjin/scAI")
 library(scAI)
@@ -469,9 +472,10 @@ rownames(adt_data) <- bm_data@assays$ADT@meta.data$var.features
 
 adt_counts_umap <- umap(t(adt_data))$layout %>% as.data.frame()
 
-p <- plot_UMAP(adt_counts_umap, metadata_vector = bm_data$celltype.l2, title = 'UMAP of ADT raw counts', run_umap = F, )
-p + labs(color = 'celltype l2')
+p <- plot_UMAP(adt_counts_umap, metadata_vector = bm_data$celltype.l2, title = 'UMAP of ADT raw counts', run_umap = F)
+p <- p + labs(color = 'celltype l2')
 
+p
 ```
 
 ```{r}
@@ -521,10 +525,6 @@ compute_silhouette((adt_data), run_dim_reduction = 'umap', bm_data$celltype.l2, 
 
 ```
 
-
-
-
-
 ```{r}
 
 compute_silhouette((bm_data@assays$ADT$data), run_dim_reduction = 'umap', bm_data$celltype.l2, result_format = 'plot') +
@@ -573,26 +573,36 @@ totalVI_normalized <- totalVI_adt@assays@data@listData$normalized_data
 
 ```{r}
 
-all_silhouette_scores <- parallel::mclapply(list((adt_data),
-                                                 (bm_data@assays$ADT@layers$data),
-                                                 t(adt_dsb),
-                                                 adt_adtnorm,
-                                                 totalVI_normalized),
-                                            function(x){compute_silhouette(matrix = x, label_vector = bm_data$celltype.l2, run_dim_reduction = 'umap',
+normalized_adt_all_methods <- list((adt_data),
+                                   (bm_data@assays$ADT@layers$data),
+                                   t(adt_dsb),
+                                   adt_adtnorm,
+                                   totalVI_normalized)
+
+umap_normalized_adt_all_methods <- parallel::mclapply(normalized_adt_all_methods, 
+                                                      function(x){umap(t(x))$layout})
+
+names(umap_normalized_adt_all_methods) <- c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI')
+umap_normalized_adt_all_methods <- lapply(umap_normalized_adt_all_methods, as.data.frame)
+
+all_silhouette_scores <- parallel::mclapply(umap_normalized_adt_all_methods,
+                                            function(x){compute_silhouette(matrix = x, label_vector = bm_data$celltype.l2, run_dim_reduction = NULL,
                                                             result_format = 'per_cluster')})
 
 all_silhouette_scores <- do.call(rbind, all_silhouette_scores)
 all_silhouette_scores$algorithm <- rep(c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI'), each = 27)
 
 plot_boxplot_categorical(all_silhouette_scores$silhouette_score, all_silhouette_scores$algorithm, names = c('Silhouette score', 'Method')) +
-  theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
+  theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1))  +
+  theme(legend.position = 'None')
 
 
 ```
 
 ```{r}
 plot_violin(all_silhouette_scores$silhouette_score, all_silhouette_scores$algorithm, names = c('Silhouette scores per cell type', 'Method'), overlay_type= 'boxplot') +
-  theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
+  theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1)) +
+  theme(legend.position = 'None')
 
 
 ```
@@ -614,29 +624,73 @@ MALT_tumour_10k <- Seurat::Read10X_h5(file = '/vast/scratch/users/liu.ne/malt_10
 
 # weirdly enough, i think this is actually 6 million cells and 33k features (even has MIRs and ORFs???)
 
-# save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
-# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
-
 
 ```
 
 ```{r}
-plot_vector_correlation(list(adt_data, bm_data@assays$ADT$data, t(adt_dsb), adt_adtnorm, totalVI_normalized), c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI'), 
+plot_vector_correlation(normalized_adt_all_methods, c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI'), 
                         bm_data$celltype.l2,'L2 celltype', is.pca.obj = F)
 
 
 ```
 
 ```{r}
-plot_linear_correlation(list(adt_data, bm_data@assays$ADT$data, t(adt_dsb), adt_adtnorm, totalVI_normalized), c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI'), 
+plot_linear_correlation(normalized_adt_all_methods, c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI'), 
                         bm_data$nCount_ADT,'ADT libsize', is.pca.obj = F)
 
 ```
 
+Now compute ARI scores
+
+```{r}
+
+ARI_scores <- parallel::mclapply(umap_normalized_adt_all_methods,
+                                 function(x){compute_silhouette(matrix = x, label_vector = bm_data$celltype.l2, run_dim_reduction = NULL)})
+
+ARI_scores <- data.frame(ARI_score = unlist(ARI_scores),
+                         algorithm = c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI'))
+
+ggplot(ARI_scores, aes(y = ARI_score,  x = algorithm, fill = algorithm))+
+  geom_col() +
+  theme_minimal() +
+  labs(x= 'algorithm', y= 'ARI score') +
+  theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.2,
+        legend.position = 'None') +
+  ggtitle('ARI score for each method')
+  
+
+```
+
+```{r, fig.size = 6}
+adt_libsize_plots <- parallel::mclapply(umap_normalized_adt_all_methods, 
+                                 function(x, name){plot_UMAP(x, log2(bm_data$nCount_ADT), 
+                                                       run_umap = F,
+                                                       label_is_continuous = T,
+                                                       title = paste0(name,' labelled by ADT libsize'))
+                                   },names(umap_normalized_adt_all_methods))
+
+adt_libsize_plots
+
+```
+
+```{r}
+adt_celltype_plots <- parallel::mclapply(umap_normalized_adt_all_methods, 
+                                 function(x, name){plot_UMAP(x, bm_data$celltype.l2,
+                                                             run_umap = F,
+                                                             label_is_continuous = F)})
+
+adt_celltype_plots
+
+```
+
+
 ```{r}
 # Backup data
 # save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
- load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 
 ```
 
