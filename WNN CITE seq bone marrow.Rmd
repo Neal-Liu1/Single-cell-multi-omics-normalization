@@ -431,7 +431,7 @@ colnames(LISI_scores) <- c('lane_score', 'donor_score', 'celltype_score', 'lane'
 ```
 
 ```{r, fig.width= 12}
-plot_violin(LISI_scores$donor_score, LISI_scores$donor, c('LISI for lane', 'lane'), overlay_type = 'boxplot')
+plot_violin(LISI_scores$celltype_score, LISI_scores$celltype, c('LISI for lane', 'lane'), overlay_type = 'boxplot')
 
 ```
 
@@ -617,16 +617,6 @@ plot_ridgeplot(tidyr::pivot_wider(all_silhouette_scores,
 
 ```
 
-
-```{r}
-
-MALT_tumour_10k <- Seurat::Read10X_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_raw_feature_bc_matrix.h5')
-
-# weirdly enough, i think this is actually 6 million cells and 33k features (even has MIRs and ORFs???)
-
-
-```
-
 ```{r}
 plot_vector_correlation(normalized_adt_all_methods, c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI'), 
                         bm_data$celltype.l2,'L2 celltype', is.pca.obj = F)
@@ -688,16 +678,118 @@ adt_celltype_plots
 
 
 ```{r}
-# Backup data
-# save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
-# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+
+compute_residual_operator <- function(A, B){
+        tBB = t(B) %*% B
+        tBB_inv = solve(tBB)
+        BtBB_inv = B %*% tBB_inv
+        tBA = t(B) %*% A
+        BtBB_inv_tBA = BtBB_inv %*% tBA
+        return(A - BtBB_inv_tBA)
+    }
+
+
+fastRUVIII <- function(matrix, control_genes, k){
+  # input: a matrix of data, with rows as genes and columns as samples, and a logical vector of control genes
+  matrix <- t(matrix)
+  # this is main data + prps
+  
+  # just replicates
+  M <- ruv::replicate.matrix(rownames(matrix))
+  
+  # just replicates
+  Y0 <- compute_residual_operator(matrix, M)
+  # should we remove all the zero rows in this step before calculating the svd?
+  # Y0 <- Y0[rowSums(Y0) != 0,]
+  
+  fullalpha <- t(svd(Y0)$u[, 1:min(ncol(M), sum(control_genes)), drop = F]) %*% # just prps matrix 
+  alpha <- fullalpha[1:min(k, nrow(fullalpha)), , drop = F]
+  ac <- alpha[, control_genes, drop = F]
+  W <- matrix[, control_genes] %*% t(ac) %*% solve(ac %*% t(ac))
+  
+  Y_normalized <- matrix - W %*% alpha
+  
+  return(Y_normalized)
+  
+}
+  
+
 
 ```
 
 
 
+```{r}
+
+test <- cbind(adt_adtnorm[1:10, 1:20], (adt_adtnorm[1:10, 1:10]-1))
+
+test1 <- fastRUVIII(test, control_genes = c(T, F, F, T, T, F, T, F, F, T), 2)
+
+View(fastRUVIII(test, control_genes = c(T, F, F, T, T, F, T, F, F, T), 2))
 
 
+```
+
+
+```{r}
+
+MALT_tumour_10k <- Seurat::Read10X_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_filtered_feature_bc_matrix.h5')
+
+MALT_tumour_10k_seurat_rna <- Seurat::CreateSeuratObject(MALT_tumour_10k[[1]])
+MALT_tumour_10k_seurat_adt <- Seurat::CreateSeuratObject(MALT_tumour_10k[[2]])
+
+# molecule_read_info <- Seurat::Read10x_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_molecule_info.h5')
+# weirdly enough, i think this is actually 6 million cells and 33k features (even has MIRs and ORFs???)
+
+hist(log2(MALT_tumour_10k_seurat_rna@assays$RNA@layers$counts@x+1))
+
+```
+
+```{r}
+
+triana_2021 <- readRDS(file = '/vast/scratch/users/liu.ne/41038073')
+
+DefaultAssay(triana_2021) <- 'RNA'
+triana_2021 <- NormalizeData(triana_2021) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA(reduction.name='rna_pca')
+triana_2021 <- Seurat::RunUMAP(triana_2021, reduction = 'rna_pca', dims = 1:30, reduction.name = 'rna_umap')
+
+DefaultAssay(triana_2021) <- 'AB'
+# VariableFeatures(triana_2021) <- rownames(triana_2021[["AB"]])
+triana_2021 <- RunPCA(triana_2021, reduction.name = 'adt_pca')
+triana_2021 <- RunUMAP(triana_2021, reduction = 'adt_pca', reduction.name = 'adt_umap', dims = 1:30)
+
+
+```
+```{r, fig.width= 10}
+
+p1 <- Seurat::DimPlot(triana_2021, reduction = 'rna_umap', label = T, repel = T, label.size = 2.5) + 
+  theme_minimal() +
+  labs(title = 'RNA UMAP cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)+
+  NoLegend()
+p2 <- Seurat::DimPlot(triana_2021, reduction = 'adt_umap', label = T, repel = T, label.size = 2.5) +
+  theme_minimal() +
+  labs(title = 'ADT UMAP cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)+
+  NoLegend()
+
+p1+p2
+
+```
+
+
+```{r}
+# Backup data
+# save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+# load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
+
+```
 
 
 
