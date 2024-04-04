@@ -47,7 +47,9 @@ library(compositions)
 # LIGER
 # FastMNN
 # Harmony
-
+library(liger)
+library(scran)
+library(harmony)
 
 
 ```
@@ -782,6 +784,80 @@ p2 <- Seurat::DimPlot(triana_2021, reduction = 'adt_umap', label = T, repel = T,
 p1+p2
 
 ```
+
+```{r}
+
+# for RNA normalization:
+# Seurat CCA, RPCA
+# LIGER
+# FastMNN
+
+
+#Seurat::CCAIntegration()
+#Seurat::RPCAIntegration()
+
+
+```
+
+
+
+```{r}
+
+# Run harmony
+
+bm_data <- harmony::RunHarmony(bm_data, 
+                               group.by.vars = 'donor',
+                               reduction.use = 'pca')
+
+bm_data <- Seurat::RunUMAP(bm_data, 
+                           reduction = 'harmony', 
+                           reduction.name = 'harmony_umap', 
+                           dims = 1:30)
+
+# Run SCtransform
+
+bm_data <- Seurat::SCTransform(bm_data, 
+                               variable.features.n = 2000)
+bm_data <- Seurat::RunPCA(bm_data, 
+                          reduction.name = 'SCT_pca') %>% RunUMAP(reduction = 'SCT_pca',
+                                                                  dims = 1:30, 
+                                                                  reduction.name = 'SCT_umap')
+
+```
+```{r, fig.width=12}
+
+p1 <- Seurat::DimPlot(bm_data, reduction = 'harmony_umap', 
+                group.by = 'celltype.l2', label = T, repel = T) + NoLegend() +
+  labs(title = 'UMAP of Harmony adjusted PCs') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)
+
+p2 <- Seurat::DimPlot(bm_data, reduction = 'SCT_umap', 
+                group.by = 'celltype.l2', label = T, repel = T) + NoLegend() +
+  labs(title = 'UMAP of SCTransformed raw counts') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05)
+
+p1 + p2
+
+```
+
+```{r}
+
+
+
+
+
+
+
+```
+
+
+
 
 
 ```{r}
