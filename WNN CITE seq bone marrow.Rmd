@@ -22,6 +22,7 @@ library(devtools)
 library(umap)
 library(ggridges)
 library(viridis)
+library(mclust)
 
 # load our helper functions from github
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
@@ -47,10 +48,15 @@ library(compositions)
 # LIGER
 # FastMNN
 # Harmony
-library(liger)
 library(scran)
 library(harmony)
 
+# Load fastRUVIII
+source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
+# source('~/HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
+
+library(liger)
+library(Rfast)
 
 ```
 
@@ -433,7 +439,7 @@ colnames(LISI_scores) <- c('lane_score', 'donor_score', 'celltype_score', 'lane'
 ```
 
 ```{r, fig.width= 12}
-plot_violin(LISI_scores$celltype_score, LISI_scores$celltype, c('LISI for lane', 'lane'), overlay_type = 'boxplot')
+plot_ridgeplot(LISI_scores$celltype_score, LISI_scores$celltype, c('LISI for lane', 'lane'))
 
 ```
 
@@ -442,7 +448,7 @@ adt_plot_data <- tidyr::pivot_longer(as.data.frame(bm_data@assays$ADT@layers$sca
                                      cols = everything())
 adt_plot_data$cell_labels <- rep(bm_data$celltype.l2, each = 25)
 
-plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype'))
+plot_ridgeplot(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype'))
 
 ```
 
@@ -451,7 +457,7 @@ adt_plot_data <- ADTnorm::arcsinh_transform(t(as.matrix(bm_data@assays$ADT@layer
 
 adt_plot_data$cell_labels <- rep(bm_data$celltype.l2, each = 25)
 
-plot_violin(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype'))
+plot_ridgeplot(adt_plot_data$value, adt_plot_data$cell_labels, c('adt', 'celltype'))
 
 ```
 
@@ -583,8 +589,8 @@ normalized_adt_all_methods <- list((adt_data),
 
 umap_normalized_adt_all_methods <- parallel::mclapply(normalized_adt_all_methods, 
                                                       function(x){umap(t(x))$layout})
-
 names(umap_normalized_adt_all_methods) <- c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI')
+
 umap_normalized_adt_all_methods <- lapply(umap_normalized_adt_all_methods, as.data.frame)
 
 all_silhouette_scores <- parallel::mclapply(umap_normalized_adt_all_methods,
@@ -637,7 +643,7 @@ Now compute ARI scores
 ```{r}
 
 ARI_scores <- parallel::mclapply(umap_normalized_adt_all_methods,
-                                 function(x){compute_silhouette(matrix = x, label_vector = bm_data$celltype.l2, run_dim_reduction = NULL)})
+                                 function(x){compute_ARI(matrix = x, label_vector = bm_data$celltype.l2, run_dim_reduction = NULL)})
 
 ARI_scores <- data.frame(ARI_score = unlist(ARI_scores),
                          algorithm = c('Raw counts', 'CLR', 'DSB', 'ADTnorm', 'totalVI'))
@@ -681,60 +687,6 @@ adt_celltype_plots
 
 ```{r}
 
-compute_residual_operator <- function(A, B){
-        tBB = t(B) %*% B
-        tBB_inv = solve(tBB)
-        BtBB_inv = B %*% tBB_inv
-        tBA = t(B) %*% A
-        BtBB_inv_tBA = BtBB_inv %*% tBA
-        return(A - BtBB_inv_tBA)
-    }
-
-
-fastRUVIII <- function(matrix, control_genes, k){
-  # input: a matrix of data, with rows as genes and columns as samples, and a logical vector of control genes
-  matrix <- t(matrix)
-  # this is main data + prps
-  
-  # just replicates
-  M <- ruv::replicate.matrix(rownames(matrix))
-  
-  # just replicates
-  Y0 <- compute_residual_operator(matrix, M)
-  # should we remove all the zero rows in this step before calculating the svd?
-  # Y0 <- Y0[rowSums(Y0) != 0,]
-  
-  fullalpha <- t(svd(Y0)$u[, 1:min(ncol(M), sum(control_genes)), drop = F]) %*% # just prps matrix 
-  alpha <- fullalpha[1:min(k, nrow(fullalpha)), , drop = F]
-  ac <- alpha[, control_genes, drop = F]
-  W <- matrix[, control_genes] %*% t(ac) %*% solve(ac %*% t(ac))
-  
-  Y_normalized <- matrix - W %*% alpha
-  
-  return(Y_normalized)
-  
-}
-  
-
-
-```
-
-
-
-```{r}
-
-test <- cbind(adt_adtnorm[1:10, 1:20], (adt_adtnorm[1:10, 1:10]-1))
-
-test1 <- fastRUVIII(test, control_genes = c(T, F, F, T, T, F, T, F, F, T), 2)
-
-View(fastRUVIII(test, control_genes = c(T, F, F, T, T, F, T, F, F, T), 2))
-
-
-```
-
-
-```{r}
-
 MALT_tumour_10k <- Seurat::Read10X_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_filtered_feature_bc_matrix.h5')
 
 MALT_tumour_10k_seurat_rna <- Seurat::CreateSeuratObject(MALT_tumour_10k[[1]])
@@ -762,6 +714,8 @@ triana_2021 <- RunUMAP(triana_2021, reduction = 'adt_pca', reduction.name = 'adt
 
 
 ```
+
+
 ```{r, fig.width= 10}
 
 p1 <- Seurat::DimPlot(triana_2021, reduction = 'rna_umap', label = T, repel = T, label.size = 2.5) + 
@@ -788,13 +742,11 @@ p1+p2
 ```{r}
 
 # for RNA normalization:
-# Seurat CCA, RPCA
 # LIGER
-# FastMNN
 
-
-#Seurat::CCAIntegration()
-#Seurat::RPCAIntegration()
+# use Seurat IntegrateLayers for fastMNN
+# Seurat::CCAIntegration()
+# Seurat::RPCAIntegration()
 
 
 ```
@@ -824,10 +776,13 @@ bm_data <- Seurat::RunPCA(bm_data,
                                                                   reduction.name = 'SCT_umap')
 
 ```
-```{r, fig.width=12}
+
+
+```{r, fig.width=10}
 
 p1 <- Seurat::DimPlot(bm_data, reduction = 'harmony_umap', 
-                group.by = 'celltype.l2', label = T, repel = T) + NoLegend() +
+                group.by = 'celltype.l2', label = T, repel = T, label.size = 2.5) + 
+  NoLegend() +
   labs(title = 'UMAP of Harmony adjusted PCs') +
   theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
           panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
@@ -835,7 +790,8 @@ p1 <- Seurat::DimPlot(bm_data, reduction = 'harmony_umap',
           aspect.ratio = 1/1.05)
 
 p2 <- Seurat::DimPlot(bm_data, reduction = 'SCT_umap', 
-                group.by = 'celltype.l2', label = T, repel = T) + NoLegend() +
+                group.by = 'celltype.l2', label = T, repel = T, label.size = 2.5) + 
+  NoLegend() +
   labs(title = 'UMAP of SCTransformed raw counts') +
   theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
           panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
@@ -846,11 +802,163 @@ p1 + p2
 
 ```
 
+# Doing RUVIII normalization
+
 ```{r}
 
+# sf.RUV_III_MK() is the one for multiple k
+
+# RUV_III() is the actual fastruv function
+# Sparse_RUV_III() is the sparse version??
+
+
+```
+
+## PRPS
+
+### Since there's no NCG function yet we'll have to make one.
+
+```{r}
+setGeneric(name = 'find_corr',
+           function(data, variable_vector){standardGeneric('find_corr')})
+
+setMethod('find_corr',
+          signature = c(variable_vector = 'numeric'),
+          function(data, variable_vector){
+            results <- Rfast::correls(y=variable_vector, x=t(data), type = 'spearman') %>% as.data.frame()
+            return(as.vector(results$correlation))
+          })
+
+setMethod('find_corr',
+          signature = c(variable_vector = 'character'),
+          function(data, variable_vector){
+            #results <- ftest(data, variable_vector)
+            results <- parallel::mclapply(1:nrow(data),
+                                          function(x){summary(aov(as.vector(data[x,])~variable_vector))[[1]][4][1,1]})
+            return((unlist(results)))
+          })
+
+
+setGeneric(name = 'FindNCG',
+           function(object,
+                    unwanted_variables,
+                    bio_variables,
+                    no.ncg = 1000,
+                    apply_log = T,
+                    sample_fraction = 0.1)
+             {standardGeneric('FindNCG')})
+
+
+setMethod('FindNCG', 
+          signature = c(object = 'Seurat',
+                        unwanted_variables = 'character',
+                        bio_variables = 'character'),
+          function(object,
+                   unwanted_variables,
+                   bio_variables,
+                   no.ncg,
+                   apply_log,
+                   sample_fraction){
+            
+            object1 <- object[,sample(ncol(object), sample_fraction * ncol(object))]
+            
+            
+            # Hardcoding main data matrix to assays > RNA > layers > counts
+            
+            if(apply_log){data <- log2(object1@assays$RNA@layers$counts+1)}
+            else{data <- object1@assays$RNA@layers$counts}
+            
+            corr_data <- parallel::mclapply(c(unwanted_variables, bio_variables), 
+                                          function(x){find_corr(as.matrix(data), object1@meta.data[[x]])})
+            
+            names(corr_data) <- c(unwanted_variables, bio_variables)
+            
+            # Flip bio variables 
+            for(name in names(corr_data)){
+              if(name %in% bio_variables){
+                corr_data[[name]] <- corr_data[[name]] * -1
+              }
+            }
+            
+            corr_data <- do.call(cbind, corr_data) %>% as.data.frame()
+            rownames(corr_data) <- rownames(object[['RNA']])
+            corr_data <- remove_NA_rows(corr_data, 0.1)
+            
+            # Rank the data
+            ranks <- apply(corr_data, 2, rank)
+            prod_ranks <- apply(ranks, 1, prod)
+            final_gene_ranks <- prod_ranks[base::order(-prod_ranks)]
+            
+            return(names(final_gene_ranks)[1:no.ncg])
+            
+          })
+
+```
+
+
+```{r}
+# Add libsize
+bm_data$log2_libsize <- log2(colSums(bm_data@assays$RNA@layers$counts))
+DefaultAssay(bm_data) <- 'RNA'
+
+# Delete graphs because of subsetting shenanigans
+bm_data1 <- bm_data
+bm_data1@graphs <- list()
+
+
+ncg <- FindNCG(bm_data1, 
+               c('log2_libsize','donor'), 
+               c('celltype.l2'), 
+               sample_fraction = 0.1, no.ncg = 1000)
+
+ncg_pca <- run_PCA(bm_data@assays$RNA@layers$counts[which(rownames(bm_data@assays$RNA) %in% ncg),])$u[,1]
+
+ggplot(mapping = aes(y=ncg_pca, x=bm_data$log2_libsize))+
+  geom_point(alpha=0.62, color= 'grey30') + # alpha for transparency to see overlap
+  labs(y="PC1 of NCGs", 
+       x="log2 libsize") +
+  theme_minimal()+
+  ggtitle('1st PC of negative control genes vs log2 libsize') +
+  theme(panel.border=element_rect(colour = "grey80", fill=NA, size=0.8),
+        aspect.ratio = 1/1.1,
+        axis.line = element_line(colour = "grey75", linewidth = 1.1),
+        panel.grid.major = element_line(color = "grey96"))
+
+```
 
 
 
+
+```{r}
+
+# THE SEURAT CANNOT HAVE ANYTHING in 'graphs' or else the subsetting throws error. (no slot i in class graph or something)
+# v5 needs to do RNA@layers$counts instead of just RNA@counts otherwise will throw weird error (no slot counts for class Array5 or something)
+
+source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
+
+
+prpc <- sc_PRPC(bm_data1,
+                libSize = 'log2_libsize',
+                batch = 'donor',
+                libSize.prps = T,
+                batch.prps = T)
+
+
+# This function DOES NOT do log for you.
+
+test <- Sparse_RUV_III(Y = log2(bm_data@assays$RNA@layers$counts+1),
+                       Yrep = prpc,
+                       M = ruv::replicate.matrix(prpc),
+                       ctl = which(rownames(bm_data1@assays$RNA) %in% ncg),
+                       k = 6)
+
+
+```
+
+
+
+
+```{r}
 
 
 
@@ -859,6 +967,194 @@ p1 + p2
 
 
 
+
+```{r}
+setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
+                                          Dataset = 'character',
+                                          Params = 'list',
+                                          RunningTime = 'numeric',
+                                          Silhouette = 'list',
+                                          ARI = 'data.frame',
+                                          LISI = 'data.frame'))
+
+# This does not work and i still dont know why.
+# setClass('SeuratBenchmark', contains = c('Seurat','BenchmarkMetrics'), slots = c('BenchmarkMetrics'))
+
+setGeneric("ComputeMultipleSilhouette", 
+           function(obj,
+                    metrics_obj, 
+                    reductions, 
+                    silhouette_format = 'per_cluster', 
+                    labels) 
+             standardGeneric("ComputeMultipleSilhouette"))
+
+setMethod('ComputeMultipleSilhouette', 
+          signature = c(obj = 'Seurat', 
+                        metrics_obj = 'BenchmarkMetrics',
+                        reductions = 'character',
+                        labels = 'character'), 
+          function(obj, 
+                   metrics_obj, 
+                   reductions, 
+                   silhouette_format, 
+                   labels){
+
+            reductions_list <- list()
+            for (name in reductions){
+              reductions_list[[name]] <- Embeddings(obj, reduction = name)
+            }
+            
+            label_vector <- obj[[labels]][,1]
+            silhouettes <- parallel::mclapply(
+              reductions_list,
+              function(x){
+                compute_silhouette(matrix = x,
+                                   label_vector = label_vector,
+                                   result_format = silhouette_format)})
+            
+            for (x in names(silhouettes)) {
+              metrics_obj@Silhouette[[x]] <- silhouettes[[x]]
+              }
+            
+            return(metrics_obj)
+          })
+
+
+setMethod('ComputeMultipleSilhouette', 
+          signature = c(obj = 'list', 
+                        metrics_obj = 'BenchmarkMetrics',
+                        labels = 'character'), 
+          function(obj, 
+                   metrics_obj, 
+                   reductions, 
+                   silhouette_format, 
+                   labels){
+            # input a list of matrices of dimensionally reduced data (rows are 
+            # samples and cols are components), calculate silhouette and store in metrics obj.
+
+            reductions_list <- obj
+            silhouettes <- parallel::mclapply(
+              reductions_list,
+              function(x){
+                compute_silhouette(matrix = x,
+                                   label_vector = labels,
+                                   result_format = silhouette_format)})
+            
+            for (x in names(silhouettes)) {
+              metrics_obj@Silhouette[[x]] <- silhouettes[[x]]
+              }
+            
+            return(metrics_obj)
+          })
+
+
+setGeneric('PlotMultipleSilhouette',
+           function(metrics_obj, 
+                    subset = 'all', 
+                    plot_type = 'violin'){
+             standardGeneric('PlotMultipleSilhouette')
+             }
+           )
+
+setMethod('PlotMultipleSilhouette', 
+          signature = c(metrics_obj = 'BenchmarkMetrics'),
+          function(metrics_obj, 
+                   subset, 
+                   plot_type){
+            
+            if(all(subset == 'all')){
+              merged_data <- do.call(rbind, metrics_obj@Silhouette)
+              merged_data$method <- rep(names(metrics_obj@Silhouette), 
+                                        each = length(unique(merged_data$labels)))
+            }
+            else if(sum(subset %in% names(metrics_obj@Silhouette)) == length(subset)){
+              merged_data <- do.call(rbind, metrics_obj@Silhouette[subset])
+              merged_data$method <- rep(names(metrics_obj@Silhouette[subset]), 
+                                        each = length(unique(merged_data$labels)))
+            
+            }
+            else{stop('Some or all the names you entered for the subset param do not exist. 
+                      Please make sure you are entering a vector of strings 
+                      corresponding to the names of the reductions.')}
+            
+            if(plot_type == 'boxplot'){
+              plot <- plot_boxplot_categorical(merged_data$silhouette_score,
+                                               merged_data$method,
+                                               names = c('silhouette score', 'method')) + 
+              theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
+                    legend.position = 'none')
+            }
+            
+            if(plot_type == 'violin'){
+              plot <- plot_violin(merged_data$silhouette_score, 
+                                  merged_data$method, 
+                                  names = c('silhouette score', 'method'), 
+                                  overlay_type = 'boxplot') + 
+                theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
+                      legend.position = 'None')
+            }
+            return(plot)
+          })
+
+```
+
+```{r}
+
+rna_metrics <- new("BenchmarkMetrics",
+                            Algorithm = character(0),  
+                            Dataset = character(0),   
+                            Params = list(),          
+                            RunningTime = numeric(0), 
+                            Silhouette = list())
+
+adt_metrics <- new("BenchmarkMetrics",
+                            Algorithm = character(0),  
+                            Dataset = character(0),   
+                            Params = list(),          
+                            RunningTime = numeric(0), 
+                            Silhouette = list())
+
+
+rna_metrics <- ComputeMultipleSilhouette(bm_data, rna_metrics, 
+                                         reductions = c('rna.umap','harmony_umap', 'SCT_umap'),
+                                         labels = 'celltype.l2')
+
+adt_metrics <- ComputeMultipleSilhouette(umap_normalized_adt_all_methods, adt_metrics, labels = bm_data$celltype.l2)
+
+```
+
+```{r}
+PlotMultipleSilhouette(rna_metrics)
+```
+
+```{r}
+PlotMultipleSilhouette(adt_metrics)
+```
+
+
+```{r}
+
+bm_data1 <- split(bm_data[['RNA']], bm_data$donor)
+
+bm_data1 <- NormalizeData(bm_data1) %>% FindVariableFeatures() %>% ScaleData()
+bm_data1 <- RunPCA(bm_data1)
+
+bm_data1 <- FindNeighbors(bm_data1, dims = 1:30, reduction = "pca")
+bm_data1 <- FindClusters(bm_data1, resolution = 2, cluster.name = "unintegrated_clusters")
+
+View(Seurat::IntegrateLayers(bm_data1, 
+                             method= RPCAIntegration, 
+                             orig.reduction = 'pca',
+                             new.reduction = "integrated_rpca"))
+
+View(Seurat::IntegrateLayers(bm_data, 
+                             method= 'CCAIntegration', 
+                             orig.reduction = 'pca',
+                             assay = 'RNA',
+                             layers = 'data'))
+
+
+```
 
 ```{r}
 # Backup data
@@ -868,5 +1164,39 @@ p1 + p2
 ```
 
 
+```{r}
 
+# install dataset
+#InstallData("ifnb")
+# load dataset
+library(ifnb.SeuratData)
+data("ifnb")
+#ifnb <- LoadData("ifnb")
+# split the RNA measurements into two layers one for control cells, one for stimulated cells
+
+
+ifnb[["RNA"]] <- split(ifnb[["RNA"]], f = ifnb$stim)
+ifnb
+# run standard anlaysis workflow
+ifnb <- NormalizeData(ifnb)
+ifnb <- FindVariableFeatures(ifnb)
+ifnb <- ScaleData(ifnb)
+ifnb <- RunPCA(ifnb)
+ifnb <- FindNeighbors(ifnb, dims = 1:30, reduction = "pca")
+ifnb <- FindClusters(ifnb, resolution = 2, cluster.name = "unintegrated_clusters")
+ifnb <- RunUMAP(ifnb, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+
+DimPlot(ifnb, reduction = "umap.unintegrated", group.by = c("stim", "seurat_clusters"))
+ifnb <- IntegrateLayers(object = ifnb, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca",
+    verbose = FALSE)
+
+# re-join layers after integration
+ifnb[["RNA"]] <- JoinLayers(ifnb[["RNA"]])
+
+ifnb <- FindNeighbors(ifnb, reduction = "integrated.cca", dims = 1:30)
+ifnb <- FindClusters(ifnb, resolution = 1)
+
+# install.packages("https://seurat.nygenome.org/src/contrib/ifnb.SeuratData_3.0.0.tar.gz", repos = NULL, type = "source") 
+
+```
 
