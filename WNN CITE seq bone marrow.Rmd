@@ -860,6 +860,7 @@ setMethod('FindNCG',
                    apply_log,
                    sample_fraction){
             
+            message(paste0('Sampling ', sample_fraction * ncol(object),' cells from your data'))
             object1 <- object[,sample(ncol(object), sample_fraction * ncol(object))]
             
             
@@ -868,12 +869,14 @@ setMethod('FindNCG',
             if(apply_log){data <- log2(object1@assays$RNA@layers$counts+1)}
             else{data <- object1@assays$RNA@layers$counts}
             
+            message('Calculating Spearman correlation for continuous variables & F score for categorical variables')
             corr_data <- parallel::mclapply(c(unwanted_variables, bio_variables), 
                                           function(x){find_corr(as.matrix(data), object1@meta.data[[x]])})
             
             names(corr_data) <- c(unwanted_variables, bio_variables)
             
             # Flip bio variables 
+            message('Finding genes highly affected by unwanted variables but not affected by biological variables')
             for(name in names(corr_data)){
               if(name %in% bio_variables){
                 corr_data[[name]] <- corr_data[[name]] * -1
@@ -888,6 +891,7 @@ setMethod('FindNCG',
             ranks <- apply(corr_data, 2, rank)
             prod_ranks <- apply(ranks, 1, prod)
             final_gene_ranks <- prod_ranks[base::order(-prod_ranks)]
+            message('FindNCG Completed!')
             
             return(names(final_gene_ranks)[1:no.ncg])
             
@@ -934,7 +938,7 @@ ggplot(mapping = aes(y=ncg_pca, x=bm_data$log2_libsize))+
 # THE SEURAT CANNOT HAVE ANYTHING in 'graphs' or else the subsetting throws error. (no slot i in class graph or something)
 # v5 needs to do RNA@layers$counts instead of just RNA@counts otherwise will throw weird error (no slot counts for class Array5 or something)
 
-source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
+# source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 
 
 prpc <- sc_PRPC(bm_data1,
@@ -943,28 +947,38 @@ prpc <- sc_PRPC(bm_data1,
                 libSize.prps = T,
                 batch.prps = T)
 
+# pro.bar <- progress_estimated(round(lo/grid.nb, digits = 0) + 2)
+# pro.bar$pause(0.1)$tick()$print()
 
 # This function DOES NOT do log for you.
 
-test <- Sparse_RUV_III(Y = log2(bm_data@assays$RNA@layers$counts+1),
-                       Yrep = prpc,
-                       M = ruv::replicate.matrix(prpc),
-                       ctl = which(rownames(bm_data1@assays$RNA) %in% ncg),
-                       k = 6)
+M <- ruv::replicate.matrix(rownames(prpc))
 
+rna_ruviii <- RUV_III(Y = as.matrix(t(log2(bm_data@assays$RNA@layers$counts+1))),
+                      Yrep = prpc,
+                      M = M,
+                      ctl = which(rownames(bm_data1@assays$RNA) %in% ncg),
+                      k = 6)
+
+# Since the dense matrix is very big we'll round to 2 digits and convert to sparse 
+rna_ruviii <- round(rna_ruviii, digits = 2) %>% as.sparse()
+
+# Create Seurat assay
+ruviii_k6 <- CreateAssay5Object(counts = t(rna_ruviii))
+bm_data@assays$RUVIII <- ruviii_k6
 
 ```
-
-
 
 
 ```{r}
 
+DefaultAssay(bm_data) <- 'RUVIII'
+bm_data@assays$RUVIII@misc <- list()
+bm_data@assays$RUVIII@key <- 'rna_ruviii_k6'
 
+bm_data <- FindVariableFeatures(bm_data, assay = 'RUVIII') %>% RunPCA(reduction.name = 'ruv_k6_pca') %>% RunUMAP(dims = 1:30, reduction.name = 'ruv_k6_umap')
 
 ```
-
-
 
 
 
@@ -1133,70 +1147,10 @@ PlotMultipleSilhouette(adt_metrics)
 
 
 ```{r}
-
-bm_data1 <- split(bm_data[['RNA']], bm_data$donor)
-
-bm_data1 <- NormalizeData(bm_data1) %>% FindVariableFeatures() %>% ScaleData()
-bm_data1 <- RunPCA(bm_data1)
-
-bm_data1 <- FindNeighbors(bm_data1, dims = 1:30, reduction = "pca")
-bm_data1 <- FindClusters(bm_data1, resolution = 2, cluster.name = "unintegrated_clusters")
-
-View(Seurat::IntegrateLayers(bm_data1, 
-                             method= RPCAIntegration, 
-                             orig.reduction = 'pca',
-                             new.reduction = "integrated_rpca"))
-
-View(Seurat::IntegrateLayers(bm_data, 
-                             method= 'CCAIntegration', 
-                             orig.reduction = 'pca',
-                             assay = 'RNA',
-                             layers = 'data'))
-
-
-```
-
-```{r}
 # Backup data
 # save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 # load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 
 ```
 
-
-```{r}
-
-# install dataset
-#InstallData("ifnb")
-# load dataset
-library(ifnb.SeuratData)
-data("ifnb")
-#ifnb <- LoadData("ifnb")
-# split the RNA measurements into two layers one for control cells, one for stimulated cells
-
-
-ifnb[["RNA"]] <- split(ifnb[["RNA"]], f = ifnb$stim)
-ifnb
-# run standard anlaysis workflow
-ifnb <- NormalizeData(ifnb)
-ifnb <- FindVariableFeatures(ifnb)
-ifnb <- ScaleData(ifnb)
-ifnb <- RunPCA(ifnb)
-ifnb <- FindNeighbors(ifnb, dims = 1:30, reduction = "pca")
-ifnb <- FindClusters(ifnb, resolution = 2, cluster.name = "unintegrated_clusters")
-ifnb <- RunUMAP(ifnb, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
-
-DimPlot(ifnb, reduction = "umap.unintegrated", group.by = c("stim", "seurat_clusters"))
-ifnb <- IntegrateLayers(object = ifnb, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca",
-    verbose = FALSE)
-
-# re-join layers after integration
-ifnb[["RNA"]] <- JoinLayers(ifnb[["RNA"]])
-
-ifnb <- FindNeighbors(ifnb, reduction = "integrated.cca", dims = 1:30)
-ifnb <- FindClusters(ifnb, resolution = 1)
-
-# install.packages("https://seurat.nygenome.org/src/contrib/ifnb.SeuratData_3.0.0.tar.gz", repos = NULL, type = "source") 
-
-```
 
