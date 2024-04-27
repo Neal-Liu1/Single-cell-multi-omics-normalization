@@ -931,8 +931,6 @@ ggplot(mapping = aes(y=ncg_pca, x=bm_data$log2_libsize))+
 ```
 
 
-
-
 ```{r}
 
 # THE SEURAT CANNOT HAVE ANYTHING in 'graphs' or else the subsetting throws error. (no slot i in class graph or something)
@@ -941,11 +939,14 @@ ggplot(mapping = aes(y=ncg_pca, x=bm_data$log2_libsize))+
 # source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 
 
-prpc <- sc_PRPC(bm_data1,
+# try setting cell names to celltype labels (every cell is a replicate of each other) when you compute the M matrix
+
+# also try not setting batch
+prpc <- sc_PRPC_v2(bm_data1,
                 libSize = 'log2_libsize',
                 batch = 'donor',
                 libSize.prps = T,
-                batch.prps = T)
+                batch.prps = F)
 
 # pro.bar <- progress_estimated(round(lo/grid.nb, digits = 0) + 2)
 # pro.bar$pause(0.1)$tick()$print()
@@ -953,31 +954,191 @@ prpc <- sc_PRPC(bm_data1,
 # This function DOES NOT do log for you.
 
 M <- ruv::replicate.matrix(rownames(prpc))
+Y <- as.matrix(t(log2(bm_data@assays$RNA@layers$counts+1)))
 
-rna_ruviii <- RUV_III(Y = as.matrix(t(log2(bm_data@assays$RNA@layers$counts+1))),
+rna_ruviii <- RUV_III(Y = Y,
                       Yrep = prpc,
                       M = M,
                       ctl = which(rownames(bm_data1@assays$RNA) %in% ncg),
-                      k = 6)
+                      k = 2,
+                      return.info = T)
+
+
+### matrixStats is very fast
+rna_ruviii <- rna_ruviii$newY
 
 # Since the dense matrix is very big we'll round to 2 digits and convert to sparse 
+rna_ruviii[rna_ruviii<0] <- 0
 rna_ruviii <- round(rna_ruviii, digits = 2) %>% as.sparse()
+rna_ruviii <- t(rna_ruviii)
+rownames(rna_ruviii) <- rownames(bm_data@assays$RNA)
+colnames(rna_ruviii) <- colnames(bm_data@assays$RNA)
 
-# Create Seurat assay
-ruviii_k6 <- CreateAssay5Object(counts = t(rna_ruviii))
-bm_data@assays$RUVIII <- ruviii_k6
+# Find variable genes so we don't have to do PCA on all 17000 genes and blow up our RAM
+# We're not using Seurat's FindVariableFeatures since the errors are a bit enigmatic.
+hvgs <- (parallel::mclapply(1:nrow(rna_ruviii), function(x){mad(as.vector(rna_ruviii[x,]))}))
+names(hvgs) <- rownames(bm_data@assays$RNA)
+hvgs <- names(sort(unlist(hvgs), decreasing = T)[1:2000])
+
+```
+
+```{r}
+plot(rna_ruviii$W[,3], bm_data$log2_libsize)
+
+plot(rna_ruviii$W[,3], col= as.factor(bm_data$celltype.l2))
+
+
+```
+
+```{r}
+M <- ruv::replicate.matrix(bm_data$celltype.l2)
+Y <- as.matrix(t(log2(bm_data@assays$RNA@layers$counts+1)))
+colnames(Y) <- rownames(bm_data@assays$RNA)
+
+rna_ruviii <- RUV_III(Y = Y,
+                      Yrep = Y,
+                      M = M,
+                      ctl = which(rownames(bm_data1@assays$RNA) %in% ncg),
+                      k = 2,
+                      return.info = T)
+
+rna_ruviii_w <- rna_ruviii$W
+
+```
+## Run dim reduction
+
+```{r}
+# turn into sparse matrix
+rna_ruviii <- rna_ruviii$newY
+rna_ruviii[rna_ruviii<0] <- 0
+rna_ruviii <- round(rna_ruviii, digits = 2) %>% as.sparse()
+rna_ruviii <- t(rna_ruviii)
+rownames(rna_ruviii) <- rownames(bm_data@assays$RNA)
+colnames(rna_ruviii) <- colnames(bm_data@assays$RNA)
+
+# get hvgs
+hvgs <- lapply(1:nrow(rna_ruviii), function(x){mad(as.vector(rna_ruviii[x,]))})
+names(hvgs) <- rownames(bm_data@assays$RNA)
+hvgs <- names(sort(unlist(hvgs), decreasing = T)[1:2500])
+
+# do pca & umap
+rna_ruv_all_pca_all_genes <- run_PCA(rna_ruviii[hvgs], pcs = 50)
+rna_ruv_all_umap_all_genes <- umap(rna_ruv_k6_pca$u[,1:30])
+
+```
+
+```{r}
+plot_UMAP(rna_ruv_all_umap_all_genes$layout, bm_data$log2_libsize, run_umap = F, 
+          label_is_continuous = T, continuous_var_upper_lim = 12)
+
+```
+
+```{r}
+plot_UMAP(bm_data@reductions$rna.umap@cell.embeddings, bm_data$log2_libsize, 
+          run_umap = F, label_is_continuous = T, continuous_var_upper_lim = 12)
+
+```
+```{r}
+Seurat::DimPlot(bm_data, reduction = 'rna.umap', group.by = 'celltype.l2', label = T, repel = T, pt.size =2.5)
+
+```
+
+# Test if libsize associates with biology
+```{r}
+summary(aov(bm_data$log2_libsize ~ bm_data$celltype.l2))
+
+```
+
+```{r, fig.height= 8}
+plot_ridgeplot(bm_data$log2_libsize, bm_data$celltype.l2, aspect_ratio = 1/0.6)
+
+```
+
+
+
+```{r}
+rna_ruv_k6_pca <- run_PCA(rna_ruviii[hvgs,], pcs = 50)
+rna_ruv_k6_umap <- umap(rna_ruv_k6_pca$u[,1:30])
+
+```
+
+
+```{r}
+plot_UMAP(rna_ruv_k6_umap$layout, bm_data$celltype.l2, run_umap = F)
+
+```
+
+
+
+```{r}
+
+plot_UMAP(bm_data@reductions$rna.umap@cell.embeddings, 
+          bm_data$log2_libsize, label_is_continuous = T, run_umap = F,
+          continuous_var_upper_lim = 12,
+          title = 'UMAP of log2 libsize of RNA raw counts')
+
+
+```
+
+```{r, fig.width= 12}
+
+# plot donor, libsize and celltype
+a <- list()
+a$u <- bm_data@reductions$pca@cell.embeddings[,1:10]
+b <- list()
+b$u <- bm_data@reductions$SCT_pca@cell.embeddings[,1:10]
+
+p1 <- plot_linear_correlation(list(a,b, rna_ruv_k6_pca), c('rna_raw_counts', 'SCT', 'ruv_k6'), bm_data$log2_libsize, 'libsize', is.pca.obj = T)
+p2 <- plot_vector_correlation(list(a,b, rna_ruv_k6_pca), c('rna_raw_counts', 'SCT', 'ruv_k6'), bm_data$donor, 'donor', is.pca.obj = T)
+p3 <- plot_vector_correlation(list(a,b, rna_ruv_k6_pca), c('rna_raw_counts', 'SCT', 'ruv_k6'), bm_data$celltype.l2, 'celltype', is.pca.obj = T)
+
+gridExtra::grid.arrange(p1,p2,p3, nrow = 2, ncol=2)
 
 ```
 
 
 ```{r}
 
-DefaultAssay(bm_data) <- 'RUVIII'
-bm_data@assays$RUVIII@misc <- list()
-bm_data@assays$RUVIII@key <- 'rna_ruviii_k6'
+DefaultAssay(bm_data1) <- 'RUVIII'
+bm_data1@assays$RUVIII@misc <- list()
+bm_data1@assays$RUVIII@key <- 'ruviii_'
 
-bm_data <- FindVariableFeatures(bm_data, assay = 'RUVIII') %>% RunPCA(reduction.name = 'ruv_k6_pca') %>% RunUMAP(dims = 1:30, reduction.name = 'ruv_k6_umap')
+# THIS WILL ERROR
+bm_data1 <- FindVariableFeatures(bm_data1) %>% RunPCA(reduction.name = 'ruv_k6_pca') %>% RunUMAP(dims = 1:30, reduction.name = 'ruv_k6_umap')
 
+
+```
+
+# Seurat rPCA
+
+```{r}
+DefaultAssay(bm_data1) <- 'RNA'
+bm_list <- Seurat::SplitObject(bm_data1, split.by = "donor")
+
+
+bm_list <- lapply(X = bm_list, FUN = function(x) {
+    x <- Seurat::NormalizeData(x)
+    x <- Seurat::FindVariableFeatures(
+      x, 
+      selection.method = "vst", 
+      nfeatures = 2000)
+})
+
+features <- Seurat::SelectIntegrationFeatures(object.list = bm_list)
+
+bm_list <- lapply(X = bm_list, FUN = function(x) {
+    x <- Seurat::ScaleData(x, features = features, verbose = FALSE)
+    x <- Seurat::RunPCA(x, features = features, verbose = FALSE)
+})
+
+panc8.anchors <- Seurat::FindIntegrationAnchors(
+  object.list = panc8.list, 
+  anchor.features = features, 
+  reduction = "rpca"
+  )
+panc8.combined <- Seurat::IntegrateData(
+  anchorset = panc8.anchors
+  )
 ```
 
 
@@ -1134,6 +1295,10 @@ rna_metrics <- ComputeMultipleSilhouette(bm_data, rna_metrics,
                                          labels = 'celltype.l2')
 
 adt_metrics <- ComputeMultipleSilhouette(umap_normalized_adt_all_methods, adt_metrics, labels = bm_data$celltype.l2)
+
+rna_metrics@Silhouette$ruvIII_k6 <- compute_silhouette(rna_ruv_k6_umap$layout, 
+                                                       bm_data$celltype.l2, 
+                                                       result_format = 'per_cluster')
 
 ```
 
