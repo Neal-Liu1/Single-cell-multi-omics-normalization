@@ -23,6 +23,7 @@ library(umap)
 library(ggridges)
 library(viridis)
 library(mclust)
+library(edgeR)
 
 # load our helper functions from github
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
@@ -980,10 +981,19 @@ hvgs <- (parallel::mclapply(1:nrow(rna_ruviii), function(x){mad(as.vector(rna_ru
 names(hvgs) <- rownames(bm_data@assays$RNA)
 hvgs <- names(sort(unlist(hvgs), decreasing = T)[1:2000])
 
+seurat_hvgs <- rownames(bm_data@assays$RNA@features)[bm_data@assays$RNA@features[,3]]
 ```
 
+
 ```{r}
-plot(rna_ruviii$W[,3], bm_data$log2_libsize)
+a <- edgeR::filterByExpr(bm_data@assays$RNA@layers$counts, min.count = 2, min.total.count = 10)
+sum(a)
+
+```
+
+
+```{r}
+plot(rna_ruviii$W[,2], bm_data$log2_libsize)
 
 plot(rna_ruviii$W[,3], col= as.factor(bm_data$celltype.l2))
 
@@ -1017,40 +1027,58 @@ rownames(rna_ruviii) <- rownames(bm_data@assays$RNA)
 colnames(rna_ruviii) <- colnames(bm_data@assays$RNA)
 
 # get hvgs
-hvgs <- lapply(1:nrow(rna_ruviii), function(x){mad(as.vector(rna_ruviii[x,]))})
-names(hvgs) <- rownames(bm_data@assays$RNA)
-hvgs <- names(sort(unlist(hvgs), decreasing = T)[1:2500])
+# hvgs <- lapply(1:nrow(rna_ruviii), function(x){mad(as.vector(rna_ruviii[x,]))})
+# names(hvgs) <- rownames(bm_data@assays$RNA)
+# hvgs <- names(sort(unlist(hvgs), decreasing = T)[1:2500])
 
 # do pca & umap
-rna_ruv_all_pca_all_genes <- run_PCA(rna_ruviii[hvgs], pcs = 50)
-rna_ruv_all_umap_all_genes <- umap(rna_ruv_k6_pca$u[,1:30])
+rna_ruv_pca <- run_PCA(rna_ruviii[seurat_hvgs], pcs = 50)
+rna_ruv_umap <- umap(rna_ruv_pca$u[,1:30])
 
 ```
 
 ```{r}
-plot_UMAP(rna_ruv_all_umap_all_genes$layout, bm_data$log2_libsize, run_umap = F, 
+plot_UMAP(rna_ruv_umap$layout, bm_data$log2_libsize, run_umap = F, 
           label_is_continuous = T, continuous_var_upper_lim = 12)
 
 ```
+
+```{r}
+plot_UMAP(rna_ruv_umap$layout, bm_data$celltype.l2, run_umap = F, 
+          label_is_continuous = F)
+
+```
+
 
 ```{r}
 plot_UMAP(bm_data@reductions$rna.umap@cell.embeddings, bm_data$log2_libsize, 
           run_umap = F, label_is_continuous = T, continuous_var_upper_lim = 12)
 
 ```
-```{r}
-Seurat::DimPlot(bm_data, reduction = 'rna.umap', group.by = 'celltype.l2', label = T, repel = T, pt.size =2.5)
 
-```
 
-# Test if libsize associates with biology
+
 ```{r}
-summary(aov(bm_data$log2_libsize ~ bm_data$celltype.l2))
+Seurat::DimPlot(bm_data1, reduction = 'rna.umap', group.by = 'celltype.l2', label = T, repel = T, label.size = 2.5) +
+    theme_minimal() +
+  labs(title = 'Cell types') +
+  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+          panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05) +
+  NoLegend()
 
 ```
 
 ```{r, fig.height= 8}
-plot_ridgeplot(bm_data$log2_libsize, bm_data$celltype.l2, aspect_ratio = 1/0.6)
+p1 <- plot_ridgeplot(colsums(log2(as.matrix(bm_data@assays$RNA@layers$counts)+1)), bm_data$celltype.l2, aspect_ratio = 1/0.6, title = 'Ridgeplot of log2 libsize per celltype')
+
+p2 <- plot_ridgeplot(colsums(as.matrix(rna_ruviii)), bm_data$celltype.l2, aspect_ratio = 1/0.6, title = 'Ridgeplot of log2 libsize per celltype')
+
+p1 <- p1 + xlim(0,6000)
+p2 <- p2 + xlim(0,6000)
+
+gridExtra::grid.arrange(p1,p2, ncol=2)
 
 ```
 
@@ -1080,6 +1108,7 @@ plot_UMAP(bm_data@reductions$rna.umap@cell.embeddings,
 
 ```
 
+
 ```{r, fig.width= 12}
 
 # plot donor, libsize and celltype
@@ -1087,10 +1116,12 @@ a <- list()
 a$u <- bm_data@reductions$pca@cell.embeddings[,1:10]
 b <- list()
 b$u <- bm_data@reductions$SCT_pca@cell.embeddings[,1:10]
+c <- list()
+c$u <- bm_data@reductions$harmony@cell.embeddings[,1:10]
 
-p1 <- plot_linear_correlation(list(a,b, rna_ruv_k6_pca), c('rna_raw_counts', 'SCT', 'ruv_k6'), bm_data$log2_libsize, 'libsize', is.pca.obj = T)
-p2 <- plot_vector_correlation(list(a,b, rna_ruv_k6_pca), c('rna_raw_counts', 'SCT', 'ruv_k6'), bm_data$donor, 'donor', is.pca.obj = T)
-p3 <- plot_vector_correlation(list(a,b, rna_ruv_k6_pca), c('rna_raw_counts', 'SCT', 'ruv_k6'), bm_data$celltype.l2, 'celltype', is.pca.obj = T)
+p1 <- plot_linear_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$log2_libsize, 'libsize', is.pca.obj = T)
+p2 <- plot_vector_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$donor, 'donor', is.pca.obj = T)
+p3 <- plot_vector_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$celltype.l2, 'celltype', is.pca.obj = T)
 
 gridExtra::grid.arrange(p1,p2,p3, nrow = 2, ncol=2)
 
@@ -1142,6 +1173,43 @@ panc8.combined <- Seurat::IntegrateData(
 ```
 
 
+## Add RUV normalization of ADT
+
+```{r}
+M <- ruv::replicate.matrix(bm_data$celltype.l2)
+Y <- as.matrix(t(log2(bm_data@assays$ADT@layers$counts+1)))
+colnames(Y) <- rownames(bm_data@assays$ADT)
+
+adt_ruviii <- RUV_III(Y = Y,
+                      Yrep = Y,
+                      M = M,
+                      #ctl = NULL,
+                      k = 1,
+                      return.info = T)
+
+adt_ruviii_w <- adt_ruviii$W
+
+
+# turn into sparse matrix
+adt_ruviii <- adt_ruviii$newY
+adt_ruviii[adt_ruviii<0] <- 0
+adt_ruviii <- round(adt_ruviii, digits = 2)
+adt_ruviii <- t(adt_ruviii)
+rownames(adt_ruviii) <- rownames(bm_data@assays$ADT)
+colnames(adt_ruviii) <- colnames(bm_data@assays$ADT)
+
+# get hvgs
+# hvgs <- lapply(1:nrow(rna_ruviii), function(x){mad(as.vector(rna_ruviii[x,]))})
+# names(hvgs) <- rownames(bm_data@assays$RNA)
+# hvgs <- names(sort(unlist(hvgs), decreasing = T)[1:2500])
+
+# do pca & umap
+adt_ruv_pca <- run_PCA(adt_ruviii, pcs = 24)
+adt_ruv_umap <- umap(adt_ruv_pca$u[,1:18])
+
+```
+
+## Benchmark performance
 
 ```{r}
 setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
@@ -1296,7 +1364,11 @@ rna_metrics <- ComputeMultipleSilhouette(bm_data, rna_metrics,
 
 adt_metrics <- ComputeMultipleSilhouette(umap_normalized_adt_all_methods, adt_metrics, labels = bm_data$celltype.l2)
 
-rna_metrics@Silhouette$ruvIII_k6 <- compute_silhouette(rna_ruv_k6_umap$layout, 
+rna_metrics@Silhouette$ruvIII_k2 <- compute_silhouette(rna_ruv_umap$layout, 
+                                                       bm_data$celltype.l2, 
+                                                       result_format = 'per_cluster')
+
+adt_metrics@Silhouette$ruvIII_k1 <- compute_silhouette(adt_ruv_umap$layout, 
                                                        bm_data$celltype.l2, 
                                                        result_format = 'per_cluster')
 
@@ -1311,11 +1383,31 @@ PlotMultipleSilhouette(adt_metrics)
 ```
 
 
+
 ```{r}
 # Backup data
 # save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 # load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 
 ```
+
+
+```{r}
+triana_celltype_mappings <- lapply(triana_2021$ct, function(x){
+  if(x %in% c()){}
+})
+
+# "B cell" = c("Pre-B cells", "Pro-B cells", "Plasma cells", "Class switched memory B cells",)
+# "Mono/DC" = c("Conventional dendritic cell 1", "Conventional dendritic cell 2", "Plasmacytoid dendritic cells", "Classical Monocytes", 
+# "Non-classical monocytes",)
+# "NK" = c("CD56brightCD16- NK cells", "CD56dimCD16+ NK cells",)
+# "Progenitor cells" = c("Late erythroid progenitor", "Late promyelocytes", "Megakaryocyte progenitors", "Early promyelocytes" , 
+# "Lymphomyeloid prog", "Early erythroid progenitor", "Myelocytes", "Eosinophil-basophil-mast cell progenitors", "Plasmacytoid dendritic cell progenitors", 
+# "HSCs & MPPs", "Erythro-myeloid progenitors", "NK cell progenitors", )
+# "T cell" = c("CD4+ memory T cells", "CD8+CD103+ tissue resident memory T cells", )
+
+```
+
+
 
 
