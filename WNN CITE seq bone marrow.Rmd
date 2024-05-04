@@ -1384,30 +1384,103 @@ PlotMultipleSilhouette(adt_metrics)
 
 
 
+
+# Cross study normalization
+
+## Filtering genes from both studies
+```{r}
+bm_genes_to_keep <- edgeR::filterByExpr(as.matrix(bm_data@assays$RNA@layers$counts), group= bm_data$celltype.l2, min.count = 1, min.total.count = 20)
+
+triana_genes_to_keep <- edgeR::filterByExpr(as.matrix(triana_2021@assays$RNA@counts), group= triana_2021$ct, min.count = 3.5, min.total.count = 20)
+
+common_genes <- intersect(rownames(bm_data@assays$RNA)[bm_genes_to_keep] ,rownames(triana_2021@assays$RNA@counts)[triana_genes_to_keep])
+
+```
+
+## Do SCTransform first on both datasets before label transfer
+```{r}
+
+bm_data2 <- CreateSeuratObject(counts = bm_data1@assays$RNA@layers$counts[rownames(bm_data@assays$RNA) %in% common_genes,])
+rownames(bm_data2) <- rownames(bm_data@assays$RNA)[rownames(bm_data@assays$RNA) %in% common_genes]
+bm_data2 <- Seurat::SCTransform(bm_data2)
+bm_data2 <- FindVariableFeatures(bm_data2)
+
+triana_2021_2 <- CreateSeuratObject(counts = triana_2021@assays$RNA@counts[rownames(triana_2021@assays$RNA@counts) %in% common_genes,], 
+                                    meta.data = triana_2021@meta.data)
+
+triana_2021_2 <- Seurat::SCTransform(triana_2021_2)
+
+```
+
+## Label transfer
+```{r}
+
+# For L1 celltypes
+anchors <- FindTransferAnchors(reference = bm_data2, 
+                               normalization.method = 'SCT',
+                               query = triana_2021_2, 
+                               dims = 1:30)
+
+predicted_celltypes <- TransferData(anchorset = anchors, refdata = bm_data$celltype.l1, dims = 1:30)
+triana_2021_2@meta.data$celltype.l1_with_transfer <- predicted_celltypes$predicted.id
+
+
+# For l2 celltypes
+predicted_celltypes2 <- TransferData(anchorset = anchors, refdata = bm_data$celltype.l2, dims = 1:30)
+triana_2021_2@meta.data$celltype.l2_with_transfer <- predicted_celltypes2$predicted.id
+
+
+# Plot max prediction scores to see how confident the predictions are
+hist(predicted_celltypes$prediction.score.max, main = 'Max predict. scores for l1 celltypes')
+hist(predicted_celltypes2$prediction.score.max, main = 'Max predict. scores for l2 celltypes')
+
+```
+
+## Merge the two studies into one Seurat
+```{r}
+
+# Deal with metadata shenanigans
+bm_data2$study <- 'Stuart_2019'
+triana_2021_2$study <- 'Triana_2021'
+bm_data2$supplied_celltype_l2 <- as.vector(bm_data$celltype.l2)
+triana_2021_2$supplied_celltype_l2 <- as.vector(triana_2021$ct)
+bm_data2$celltype.l1_with_transfer <- as.vector(bm_data$celltype.l1)
+bm_data2$celltype.l2_with_transfer <- as.vector(bm_data$celltype.l2)
+
+# merge 
+merged_data <- merge(bm_data2, triana_2021_2)
+
+```
+
+## Run the basic seurat pipeline for dim reduction (like we did before)
+```{r}
+DefaultAssay(merged_data) <- 'RNA'
+merged_data <- NormalizeData(merged_data) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA(reduction.name = 'rna_pca')
+
+merged_data <- RunUMAP(merged_data, 
+                       reduction = 'rna_pca', 
+                       dims = 1:30, 
+                       reduction.name = 'rna_umap')
+
+```
+
+
+```{r}
+
+
+
+
+```
+
+
+
+
 ```{r}
 # Backup data
 # save.image(file= '/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 # load('/vast/scratch/users/liu.ne/bm_CITEseq_backup.RData')
 
 ```
-
-
-```{r}
-triana_celltype_mappings <- lapply(triana_2021$ct, function(x){
-  if(x %in% c()){}
-})
-
-# "B cell" = c("Pre-B cells", "Pro-B cells", "Plasma cells", "Class switched memory B cells",)
-# "Mono/DC" = c("Conventional dendritic cell 1", "Conventional dendritic cell 2", "Plasmacytoid dendritic cells", "Classical Monocytes", 
-# "Non-classical monocytes",)
-# "NK" = c("CD56brightCD16- NK cells", "CD56dimCD16+ NK cells",)
-# "Progenitor cells" = c("Late erythroid progenitor", "Late promyelocytes", "Megakaryocyte progenitors", "Early promyelocytes" , 
-# "Lymphomyeloid prog", "Early erythroid progenitor", "Myelocytes", "Eosinophil-basophil-mast cell progenitors", "Plasmacytoid dendritic cell progenitors", 
-# "HSCs & MPPs", "Erythro-myeloid progenitors", "NK cell progenitors", )
-# "T cell" = c("CD4+ memory T cells", "CD8+CD103+ tissue resident memory T cells", )
-
-```
-
 
 
 
