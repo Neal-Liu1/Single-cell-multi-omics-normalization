@@ -1457,19 +1457,22 @@ merged_data <- merge(bm_data2, triana_2021_2)
 DefaultAssay(merged_data) <- 'RNA'
 merged_data <- NormalizeData(merged_data) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA(reduction.name = 'rna_pca')
 
-merged_data <- RunUMAP(merged_data, 
-                       reduction = 'rna_pca', 
-                       dims = 1:30, 
-                       reduction.name = 'rna_umap')
+# Seurat's new umap doesnt work for merged data, so we need to do it ourselves.
+# merged_data <- RunUMAP(merged_data, reduction = 'rna_pca', dims = 1:30, reduction.name = 'rna_umap')
+# This will error 'no slot of name "i" for this object of class "dgRMatrix"'
+
+rna_umap <- umap(merged_data[['rna_pca']]@cell.embeddings[,1:30])
+rna_umap_dim_reduc <- SeuratObject::CreateDimReducObject(embeddings = rna_umap$layout, key = 'rna_')
+merged_data@reductions$rna_umap <- rna_umap_dim_reduc
 
 ```
 
+```{r, fig.width= 12, fig.height= 8}
+p1 <- DimPlot(merged_data, reduction = 'rna_umap', group.by = 'study')
+p2 <- DimPlot(merged_data, reduction = 'rna_umap', group.by = 'celltype.l1_with_transfer', label = T, repel = T) + 
+  NoLegend()
 
-```{r}
-
-
-
-
+p1 + p2
 ```
 
 
