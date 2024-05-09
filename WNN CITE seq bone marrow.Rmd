@@ -13,7 +13,10 @@ Load libraries & our own helper functions
 
 ```{r}
 
+
+# devtools::install_version("Seurat")
 library(Seurat)
+# devtools::install_github('satijalab/seurat-data')
 library(SeuratData)
 library(cowplot)
 library(dplyr)
@@ -31,24 +34,17 @@ devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-in
 set.seed(42)
 
 # devtools::install_github("sqjin/scAI")
-library(scAI)
+# library(scAI)
+# devtools::install_github("linnykos/tiltedCCA")
 library(tiltedCCA)
+# BiocManager::install("MOFA2")
 library(MOFA2)
 
-# ADT normalization (ADTnorm, DSB, CLR)
 # remotes::install_github("yezhengSTAT/ADTnorm")
 library(ADTnorm)
+
+# install.packages('dsb')
 library(dsb)
-# for CLR
-library(compositions)
-# benchmark ARI, silhouette with umap, vector correlation w pca,
-
-
-# for RNA normalization:
-# Seurat sctransform, CCA, RPCA
-# LIGER
-# FastMNN
-# Harmony
 library(scran)
 library(harmony)
 
@@ -56,8 +52,10 @@ library(harmony)
 source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 # source('~/HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 
-library(liger)
-library(Rfast)
+# install.packages('rliger')
+library(rliger)
+# BiocManager::install("batchelor")
+library(batchelor)
 
 ```
 
@@ -685,21 +683,6 @@ adt_celltype_plots
 
 ```
 
-
-```{r}
-
-MALT_tumour_10k <- Seurat::Read10X_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_filtered_feature_bc_matrix.h5')
-
-MALT_tumour_10k_seurat_rna <- Seurat::CreateSeuratObject(MALT_tumour_10k[[1]])
-MALT_tumour_10k_seurat_adt <- Seurat::CreateSeuratObject(MALT_tumour_10k[[2]])
-
-# molecule_read_info <- Seurat::Read10x_h5(file = '/vast/scratch/users/liu.ne/malt_10k_protein_v3_molecule_info.h5')
-# weirdly enough, i think this is actually 6 million cells and 33k features (even has MIRs and ORFs???)
-
-hist(log2(MALT_tumour_10k_seurat_rna@assays$RNA@layers$counts@x+1))
-
-```
-
 ```{r}
 
 triana_2021 <- readRDS(file = '/vast/scratch/users/liu.ne/41038073')
@@ -804,16 +787,6 @@ p1 + p2
 ```
 
 # Doing RUVIII normalization
-
-```{r}
-
-# sf.RUV_III_MK() is the one for multiple k
-
-# RUV_III() is the actual fastruv function
-# Sparse_RUV_III() is the sparse version??
-
-
-```
 
 ## PRPS
 
@@ -1109,25 +1082,6 @@ plot_UMAP(bm_data@reductions$rna.umap@cell.embeddings,
 ```
 
 
-```{r, fig.width= 12}
-
-# plot donor, libsize and celltype
-a <- list()
-a$u <- bm_data@reductions$pca@cell.embeddings[,1:10]
-b <- list()
-b$u <- bm_data@reductions$SCT_pca@cell.embeddings[,1:10]
-c <- list()
-c$u <- bm_data@reductions$harmony@cell.embeddings[,1:10]
-
-p1 <- plot_linear_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$log2_libsize, 'libsize', is.pca.obj = T)
-p2 <- plot_vector_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$donor, 'donor', is.pca.obj = T)
-p3 <- plot_vector_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$celltype.l2, 'celltype', is.pca.obj = T)
-
-gridExtra::grid.arrange(p1,p2,p3, nrow = 2, ncol=2)
-
-```
-
-
 ```{r}
 
 DefaultAssay(bm_data1) <- 'RUVIII'
@@ -1140,12 +1094,57 @@ bm_data1 <- FindVariableFeatures(bm_data1) %>% RunPCA(reduction.name = 'ruv_k6_p
 
 ```
 
-# Seurat rPCA
 
+## Liger
+```{r}
+
+liger_normalized <- rliger::normalize(bm_data@assays$RNA@layers$counts, log = F)
+liger_normalized <- round(liger_normalized, digits = 2) %>% as.sparse()
+rownames(liger_normalized) <- rownames(bm_data@assays$RNA)
+
+liger_normalized_scaled <- rliger::scaleNotCenter(liger_normalized[seurat_hvgs,])
+
+liger_pca <- run_PCA(liger_normalized[seurat_hvgs,], pcs = 50)
+liger_pca_scaled <- run_PCA(liger_normalized_scaled, pcs = 50)
+
+rownames(liger_pca$u) <- colnames(bm_data)
+bm_data@reductions$liger_pca <- CreateDimReducObject(embeddings = liger_pca$u, key = 'pc_')
+# bm_data <- RunUMAP(bm_data, reduction = 'liger_pca', dims = 1:30)
+
+liger_umap <- uwot::umap(liger_pca$u[,1:30], init = 'pca', metric = 'cosine', n_neighbors = 30)
+
+plot_UMAP(liger_umap, run_umap = F, bm_data$celltype.l2)
+
+```
+
+
+## fastMNN
+```{r}
+
+# batchelor::fastMNN( log transformed matrix (cols as cells rows as genes), batch = vector, subset.row = vector of highly variable genes )
+
+bm_fastMNN <- batchelor::fastMNN(as.matrix(bm_data@assays$RNA@layers$data),
+                                 batch = bm_data$donor,
+                                 subset.row = as.vector(bm_data@assays$RNA@features[,3]))
+
+bm_fastMNN_pcs <- bm_fastMNN_pcs@int_colData$reducedDims$corrected
+rownames(bm_fastMNN_pcs) <- colnames(bm_data)
+
+mnn_dim_reduc <- CreateDimReducObject(embeddings = bm_fastMNN_pcs, key = 'mnn_')
+bm_data@reductions$fastMNN <- mnn_dim_reduc
+
+# fastMNN_umap <- RunUMAP(bm_data, dims = 1:30, reduction = 'fastMNN', reduction.name = 'fastMNN_umap')
+bm_data@reductions$fastMNN_umap <- CreateDimReducObject(embeddings = umap(bm_fastMNN_pcs[,1:30])$layout, key = 'mnn_')
+
+plot_UMAP((bm_data@reductions$fastMNN_umap@cell.embeddings), bm_data$celltype.l2, run_umap = F)
+
+```
+
+
+## Seurat rPCA
 ```{r}
 DefaultAssay(bm_data1) <- 'RNA'
 bm_list <- Seurat::SplitObject(bm_data1, split.by = "donor")
-
 
 bm_list <- lapply(X = bm_list, FUN = function(x) {
     x <- Seurat::NormalizeData(x)
@@ -1162,19 +1161,60 @@ bm_list <- lapply(X = bm_list, FUN = function(x) {
     x <- Seurat::RunPCA(x, features = features, verbose = FALSE)
 })
 
-panc8.anchors <- Seurat::FindIntegrationAnchors(
-  object.list = panc8.list, 
+bm_anchors_rpca <- Seurat::FindIntegrationAnchors(
+  object.list = bm_list, 
   anchor.features = features, 
   reduction = "rpca"
   )
-panc8.combined <- Seurat::IntegrateData(
-  anchorset = panc8.anchors
+
+bm_combined_rpca <- Seurat::IntegrateData(
+  anchorset = bm_anchors_rpca
   )
+
+# Run dim reduc
+# This is scaled!!
+bm_data@reductions$rpca_integrated_pca <- Seurat::RunPCA(ScaleData(bm_combined_rpca@assays$integrated))
+# bm_data <- RunUMAP(bm_data, reduction = 'rpca_integrated_pca', dims = 1:30, reduction.name = 'rpca_integrated_umap')
+
+bm_data@reductions$rpca_integrated_umap <- SeuratObject::CreateDimReducObject(embeddings = umap(bm_data@reductions$rpca_integrated_pca@cell.embeddings[,1:30])$layout, 
+                                                                             key = 'rna_')
+
 ```
 
+## Seurat CCA (warning: this might be pretty slow)
+```{r}
+
+DefaultAssay(bm_data1) <- 'RNA'
+bm_list <- Seurat::SplitObject(bm_data1, split.by = "donor")
+
+bm_list <- lapply(X = bm_list, FUN = function(x) {
+    x <- Seurat::NormalizeData(x)
+    x <- Seurat::FindVariableFeatures(
+      x, 
+      selection.method = "vst", 
+      nfeatures = 2000)
+})
+
+features <- Seurat::SelectIntegrationFeatures(object.list = bm_list)
+
+bm_anchors_cca <- Seurat::FindIntegrationAnchors(
+  object.list = bm_list, 
+  anchor.features = features,
+  reduction = 'cca')
+
+bm_combined_cca <- Seurat::IntegrateData(anchorset = bm_anchors_cca)
+
+# Run dim reduc
+# This is scaled!!
+bm_data@reductions$cca_integrated_pca_scaled <- Seurat::RunPCA(ScaleData(bm_combined_cca@assays$integrated))
+#bm_data <- RunUMAP(bm_data, reduction = 'cca_integrated_pca', dims = 1:30, reduction.name = 'cca_integrated_umap')
+
+bm_data@reductions$cca_integrated_umap <- SeuratObject::CreateDimReducObject(embeddings = umap(bm_data@reductions$cca_integrated_pca_scaled@cell.embeddings[,1:30])$layout, 
+                                                                             key = 'rna_')
+
+```
 
 ## Add RUV normalization of ADT
-
 ```{r}
 M <- ruv::replicate.matrix(bm_data$celltype.l2)
 Y <- as.matrix(t(log2(bm_data@assays$ADT@layers$counts+1)))
@@ -1213,7 +1253,7 @@ adt_ruv_umap <- umap(adt_ruv_pca$u[,1:18])
 
 ```{r}
 setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
-                                          Dataset = 'character',
+                                          Dataset = 'list',
                                           Params = 'list',
                                           RunningTime = 'numeric',
                                           Silhouette = 'list',
@@ -1345,21 +1385,25 @@ setMethod('PlotMultipleSilhouette',
 
 rna_metrics <- new("BenchmarkMetrics",
                             Algorithm = character(0),  
-                            Dataset = character(0),   
+                            Dataset = list(),   
                             Params = list(),          
                             RunningTime = numeric(0), 
                             Silhouette = list())
 
 adt_metrics <- new("BenchmarkMetrics",
                             Algorithm = character(0),  
-                            Dataset = character(0),   
+                            Dataset = list(),   
                             Params = list(),          
                             RunningTime = numeric(0), 
                             Silhouette = list())
 
 
 rna_metrics <- ComputeMultipleSilhouette(bm_data, rna_metrics, 
-                                         reductions = c('rna.umap','harmony_umap', 'SCT_umap'),
+                                         reductions = c('rna.umap',
+                                                        'harmony_umap', 
+                                                        'SCT_umap', 
+                                                        'rpca_integrated_umap',
+                                                        'cca_integrated_umap'),
                                          labels = 'celltype.l2')
 
 adt_metrics <- ComputeMultipleSilhouette(umap_normalized_adt_all_methods, adt_metrics, labels = bm_data$celltype.l2)
@@ -1377,6 +1421,25 @@ adt_metrics@Silhouette$ruvIII_k1 <- compute_silhouette(adt_ruv_umap$layout,
 ```{r}
 PlotMultipleSilhouette(rna_metrics)
 ```
+
+```{r, fig.width= 12}
+
+# plot donor, libsize and celltype
+a <- list()
+a$u <- bm_data@reductions$pca@cell.embeddings[,1:10]
+b <- list()
+b$u <- bm_data@reductions$SCT_pca@cell.embeddings[,1:10]
+c <- list()
+c$u <- bm_data@reductions$harmony@cell.embeddings[,1:10]
+
+p1 <- plot_linear_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$log2_libsize, 'libsize', is.pca.obj = T)
+p2 <- plot_vector_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$donor, 'donor', is.pca.obj = T)
+p3 <- plot_vector_correlation(list(a,b, rna_ruv_pca, c), c('rna_raw_counts', 'SCT', 'ruv_k2', 'harmony'), bm_data$celltype.l2, 'celltype', is.pca.obj = T)
+
+gridExtra::grid.arrange(p1,p2,p3, nrow = 2, ncol=2)
+
+```
+
 
 ```{r}
 PlotMultipleSilhouette(adt_metrics)
@@ -1467,15 +1530,66 @@ merged_data@reductions$rna_umap <- rna_umap_dim_reduc
 
 ```
 
-```{r, fig.width= 12, fig.height= 8}
-p1 <- DimPlot(merged_data, reduction = 'rna_umap', group.by = 'study')
+## Plot UMAPs
+```{r, fig.width= 10}
+
+# This is seurat log normalized scaled & var features only.
+
+p1 <- DimPlot(merged_data, reduction = 'rna_umap', group.by = 'study', label = T, repel = T) +
+  theme_minimal() +
+  labs(title = 'Study') +
+  xlab('umap1')+
+  ylab('umap2')+
+  theme(axis.line = element_line(colour = "grey75", linewidth=0.9),
+          panel.border = element_rect(colour = "grey96", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05) +
+  NoLegend()
 p2 <- DimPlot(merged_data, reduction = 'rna_umap', group.by = 'celltype.l1_with_transfer', label = T, repel = T) + 
+  theme_minimal() +
+  labs(title = 'Cell types') +
+  xlab('umap1')+
+  ylab('umap2')+
+  theme(axis.line = element_line(colour = "grey75", linewidth=0.9),
+          panel.border = element_rect(colour = "grey96", fill=NA, size=0.7),
+          panel.grid.major = element_line(color = "grey96"),
+          aspect.ratio = 1/1.05) +
   NoLegend()
 
 p1 + p2
+
 ```
 
 
+## Add ADT data
+```{r}
+
+# Subset to common adts and then concat the count matrix
+
+common_adts <- intersect(sub("-AB$", "", rownames(triana_2021@assays$AB)), rownames(bm_data@assays$ADT))
+triana_2021_2@assays$ADT <- CreateAssay5Object(counts = triana_2021@assays$AB@counts)
+rownames(triana_2021_2@assays$ADT) <- sub("-AB$", "", rownames(triana_2021@assays$AB))
+
+combined_matrix <- cbind(bm_data@assays$ADT@layers$counts[match(common_adts, rownames(bm_data@assays$ADT)),],
+                         triana_2021_2@assays$ADT@layers$counts[match(common_adts, rownames(triana_2021_2@assays$ADT)),])
+
+combined_adt_assay <- CreateAssay5Object(counts = combined_matrix, )
+combined_adt_assay <- NormalizeData(combined_adt_assay, normalization.method = 'CLR', margin = 2)
+
+merged_data[['ADT']] <- combined_adt_assay
+
+```
+
+## Run dim reduction and plot ADT
+```{r}
+
+DefaultAssay(merged_data) <- 'ADT'
+rownames(merged_data@assays$ADT) <- common_adts
+VariableFeatures(merged_data@assays$ADT) <- rownames(merged_data[['ADT']])
+
+merged_data <- NormalizeData(merged_data, normalization.method = 'CLR', margin = 2)
+
+```
 
 
 ```{r}
