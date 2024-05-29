@@ -1681,8 +1681,8 @@ p2 <- DimPlot(merged_data, reduction = 'fastMNN_umap', group.by = 'celltype.l1_w
 p1 + p2
 
 ```
-# ruvIII
 
+# ruvIII
 
 ```{r}
 
@@ -1814,11 +1814,10 @@ merged_ruviii_rna <- RUV_III(Y = Y,
                       Yrep = Y,
                       M = M,
                       ctl = rownames(merged_counts_seurat) %in% merged_control_genes,
-                      k = 3,
+                      k = 20,
                       return.info = T)
 a2 <- Sys.time()
 ruv_runtime <- a2-a1
-
 merged_ruviii_rna$newY[merged_ruviii_rna$newY < 0] <- 0
 merged_ruviii_rna$newY <- round(merged_ruviii_rna$newY, digits = 2)
 merged_ruviii_rna$newY <- as.sparse(merged_ruviii_rna$newY)
@@ -1826,8 +1825,18 @@ merged_ruviii_rna$newY <- as.sparse(merged_ruviii_rna$newY)
 ```
 
 ```{r}
+merged_rna_ruv_pca <- run_PCA(t(scale(merged_ruviii_rna$newY[,as.vector(merged_data@assays$RNA@features[,5])])), 30)
+merged_rna_ruv_umap <- umap(merged_rna_ruv_pca$u)
 
+plot_UMAP(merged_rna_ruv_umap$layout, merged_data$celltype.l1_with_transfer, run_umap = F)+
+  coord_cartesian(xlim = c(-10,10), ylim = c(-10,10))
 
+```
+
+```{r}
+
+plot_UMAP(merged_rna_ruv_umap$layout, merged_data$study, run_umap = F)+
+  coord_cartesian(xlim = c(-10,10), ylim = c(-10,10))
 
 ```
 
