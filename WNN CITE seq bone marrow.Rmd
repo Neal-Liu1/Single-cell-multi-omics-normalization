@@ -1792,10 +1792,11 @@ plot_UMAP(ncg_umap$layout, run_umap = F, metadata_vector = merged_data$study, ti
 
 ```
 
-```{r}
+
+```{r, fig.width= 10}
 plot_UMAP(ncg_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l1_with_transfer, 
           title = 'control genes')+
-  coord_cartesian(ylim = c(-7,7))
+  coord_cartesian(ylim = c(-10,10))
 
 ```
 
@@ -1825,6 +1826,112 @@ merged_ruviii_rna$newY <- as.sparse(merged_ruviii_rna$newY)
 ```
 
 ```{r}
+
+plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/1, run_umap = T, label_is_continuous = F, 
+                      continuous_var_upper_lim = NULL){
+  # taking a matrix and a vector of metadata, plot UMAP of the matrix colored by the groups in the metadata vector
+  
+  if(run_umap){
+    umap_result = umap(t(matrix))
+    df = data.frame(umap_result$layout)}
+  if(!run_umap){df <- as.data.frame(matrix)}
+  colnames(df) = c("UMAP1", "UMAP2")
+  
+  if(!is.null(continuous_var_upper_lim)){
+    if(class(continuous_var_upper_lim) != 'numeric'){stop("You didn't enter a numerical value for the continous variable uppe limit. Please only enter numbers.")}
+    else(metadata_vector <- lapply(metadata_vector,
+                                   function(x) ifelse(x > continuous_var_upper_lim,
+                                                      continuous_var_upper_lim,
+                                                      x)) %>% unlist())}
+  
+  df$metadata = metadata_vector 
+  
+  if(!label_is_continuous){
+    p <- (ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
+      geom_point(size = 0.07) +
+      ggtitle(title) +
+      theme_minimal() +
+      theme(axis.line = element_line(colour = "grey50", linewidth = 0.9),
+            panel.border = element_blank(),  #element_rect(colour = "grey90", fill=NA, size=0.7),
+            panel.grid.major = element_blank(),  #element_line(color = "grey96"),
+            panel.grid.minor = element_blank(),
+            aspect.ratio = aspect_ratio))
+  }
+  
+  if(label_is_continuous){
+    ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
+      geom_point(size = 0.07) +
+      scale_fill_viridis() +
+      scale_color_viridis() +
+      ggtitle(title) +
+      theme_minimal() +
+      theme(axis.line = element_line(colour = "grey50", linewidth = 0.9),
+            panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+            panel.grid.major = element_line(color = "grey96"),
+            aspect.ratio = 1/1.05)
+  }
+  
+  if(!label_is_continuous){
+  xdens <- axis_canvas(p, axis = "x")+
+    geom_density(df, mapping = aes(x = UMAP1, fill = metadata_vector), color= 'grey55', alpha = 0.50, size = 0.2) +
+    theme(legend.position = "none")
+  
+  ydens <- axis_canvas(p, axis = "y", coord_flip = TRUE) +
+    geom_density(df, mapping = aes(x = UMAP2, fill = metadata_vector), color= 'grey55', alpha = 0.50, size = 0.2) +
+    theme(legend.position = "none")+
+    coord_flip()
+  }
+  
+  p1 <- insert_xaxis_grob(p, xdens, grid::unit(.2, "null"), position = "top")
+  p2 <- insert_yaxis_grob(p1, ydens, grid::unit(.2, "null"), position = "right")
+  pList <- ggdraw(p2)
+  
+  return(pList)
+}
+
+
+
+```
+
+
+```{r}
+plot_UMAP(merged_data@reductions$harmony_umap@cell.embeddings, merged_data$celltype.l2_with_transfer, run_umap = F)
+
+```
+
+
+
+```{r}
+merged_rna_ruv_pca <- run_PCA(t(scale(merged_ruviii_rna$newY[,as.vector(merged_data@assays$RNA@features[,5])])), 30)
+merged_rna_ruv_umap <- umap(merged_rna_ruv_pca$u)
+
+plot_UMAP(merged_rna_ruv_umap$layout, merged_data$celltype.l2_with_transfer, run_umap = F)
+
+```
+
+```{r}
+
+plot_UMAP(merged_rna_ruv_umap$layout, merged_data$study, run_umap = F)
+
+```
+
+
+```{r}
+a1 <- Sys.time()
+merged_ruviii_rna <- RUV_III(Y = Y,
+                      Yrep = Y,
+                      M = M,
+                      ctl = rownames(merged_counts_seurat) %in% merged_control_genes,
+                      k = 4,
+                      return.info = T)
+a2 <- Sys.time()
+ruv_runtime <- a2-a1
+merged_ruviii_rna$newY[merged_ruviii_rna$newY < 0] <- 0
+merged_ruviii_rna$newY <- round(merged_ruviii_rna$newY, digits = 2)
+merged_ruviii_rna$newY <- as.sparse(merged_ruviii_rna$newY)
+
+```
+```{r}
 merged_rna_ruv_pca <- run_PCA(t(scale(merged_ruviii_rna$newY[,as.vector(merged_data@assays$RNA@features[,5])])), 30)
 merged_rna_ruv_umap <- umap(merged_rna_ruv_pca$u)
 
@@ -1833,12 +1940,17 @@ plot_UMAP(merged_rna_ruv_umap$layout, merged_data$celltype.l1_with_transfer, run
 
 ```
 
-```{r}
 
-plot_UMAP(merged_rna_ruv_umap$layout, merged_data$study, run_umap = F)+
-  coord_cartesian(xlim = c(-10,10), ylim = c(-10,10))
+
+```{r, fig.width= 10}
+
+plot_UMAP(merged_rna_ruv_umap$layout, merged_data$study, run_umap = F)
 
 ```
+
+
+
+
 
 ## Add ADT data
 ```{r}
