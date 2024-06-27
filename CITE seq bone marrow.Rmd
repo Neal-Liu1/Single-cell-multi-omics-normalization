@@ -29,8 +29,11 @@ library(mclust)
 library(edgeR)
 library(Rfast)
 
-# load our helper functions from github
+# load our general helper functions from github
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
+
+# load our single cell specific helper functions from the local HPC directory
+source('Sc_helper_functions.R')
 
 set.seed(42)
 
@@ -1863,7 +1866,7 @@ plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/
       geom_text(data = centroids, aes(label = metadata), size = 3, color = "black", hjust = 0.5, vjust = 0.5)
   }
   
-  if(label_is_continuous){
+  if(label_is_continuous){return(
     ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
       geom_point(size = 0.07, alpha = alpha) +
       scale_fill_viridis() +
@@ -1871,10 +1874,12 @@ plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/
       ggtitle(title) +
       theme_minimal() +
       theme(axis.line = element_line(colour = "grey50", linewidth = 0.9),
-            panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
-            panel.grid.major = element_line(color = "grey96"),
-            aspect.ratio = 1/1.05)  
-    }
+            panel.border = element_blank(),  #element_rect(colour = "grey90", fill=NA, size=0.7),
+            panel.grid.major = element_blank(),  #element_line(color = "grey96"),
+            panel.grid.minor = element_blank(),
+            aspect.ratio = aspect_ratio,
+            legend.position = "none")
+    )}
   
   if(!label_is_continuous){
   xdens <- axis_canvas(p, axis = "x")+
@@ -1885,11 +1890,12 @@ plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/
     geom_density(df, mapping = aes(x = UMAP2, fill = metadata_vector), color= 'grey55', alpha = 0.50, size = 0.2) +
     theme(legend.position = "none")+
     coord_flip()
-  }
+  
   
   p1 <- insert_xaxis_grob(p, xdens, grid::unit(.2, "null"), position = "top")
   p2 <- insert_yaxis_grob(p1, ydens, grid::unit(.2, "null"), position = "right")
   pList <- ggdraw(p2)
+  }
   
   return(pList)
 }
@@ -1985,6 +1991,7 @@ merged_data[['ADT']] <- combined_adt_assay
 ```{r}
 
 DefaultAssay(merged_data) <- 'ADT'
+merged_data$log2_adt_libsize <- log2(colsums(as.matrix(merged_data@assays$ADT@layers$counts)))
 merged_data <- ScaleData(merged_data) %>% RunPCA(reduction.name = 'adt_pca_scaled', npcs = 11)
 scaled_adt_umap <- umap(merged_data@reductions$adt_pca_scaled@cell.embeddings)
 
@@ -1998,7 +2005,7 @@ unscaled_adt_raw_counts_umap <- umap(adt_raw_counts_pca_scaled$u)
 ```
 
 
-```{r, fig.width= 8}
+```{r, fig.width= 10}
 p1 <- plot_UMAP(unscaled_adt_raw_counts_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
           title = 'Raw counts (scaled) vs celltype ', alpha = 0.2)
 
@@ -2009,8 +2016,16 @@ gridExtra::grid.arrange(p1,p2, ncol=2)
 
 ```
 
-```{r, fig.width= 8}
-p1 <- plot_UMAP(scaled_adt_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l1_with_transfer, 
+```{r}
+plot_UMAP(unscaled_adt_raw_counts_umap$layout, run_umap = F, metadata_vector = merged_data$log2_adt_libsize, 
+          title = 'vs libsize', alpha = 0.2, label_is_continuous = T, continuous_var_upper_lim = 13)
+
+```
+
+
+
+```{r, fig.width= 10}
+p1 <- plot_UMAP(scaled_adt_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
           title = 'CLR (scaled) vs celltype ', alpha = 0.2)
 
 p2 <- plot_UMAP(scaled_adt_umap$layout, run_umap = F, metadata_vector = merged_data$study, 
@@ -2019,6 +2034,14 @@ p2 <- plot_UMAP(scaled_adt_umap$layout, run_umap = F, metadata_vector = merged_d
 gridExtra::grid.arrange(p1,p2, ncol=2)
 
 ```
+
+```{r}
+plot_UMAP(scaled_adt_umap$layout, run_umap = F, metadata_vector = merged_data$log2_adt_libsize, 
+          title = 'vs libsize', alpha = 0.2, label_is_continuous = T, continuous_var_upper_lim = 13)
+
+```
+
+
 #dsb
 
 ```{r}
@@ -2032,8 +2055,8 @@ merged_adt_dsb_umap <- umap(merged_adt_dsb_pca_scaled$u)
 ```
 
 
-```{r, fig.width= 8}
-p1 <- plot_UMAP(merged_adt_dsb_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l1_with_transfer, 
+```{r, fig.width= 10}
+p1 <- plot_UMAP(merged_adt_dsb_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
           title = 'DSB (scaled) vs celltype ', alpha = 0.2)
 
 p2 <- plot_UMAP(merged_adt_dsb_umap$layout, run_umap = F, metadata_vector = merged_data$study, 
@@ -2042,6 +2065,15 @@ p2 <- plot_UMAP(merged_adt_dsb_umap$layout, run_umap = F, metadata_vector = merg
 gridExtra::grid.arrange(p1,p2, ncol=2)
 
 ```
+
+```{r}
+plot_UMAP(merged_adt_dsb_umap$layout, run_umap = F, metadata_vector = merged_data$log2_adt_libsize, 
+          title = 'vs libsize', alpha = 0.2, label_is_continuous = T, continuous_var_upper_lim = 13)
+
+```
+
+
+
 
 ```{r}
 
@@ -2054,8 +2086,8 @@ merged_adt_adtnorm_umap <- umap(merged_adtnorm_pca_scaled$u)
 
 ```
 
-```{r, fig.width= 8}
-p1 <- plot_UMAP(merged_adt_adtnorm_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l1_with_transfer, 
+```{r, fig.width= 10}
+p1 <- plot_UMAP(merged_adt_adtnorm_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
           title = 'ADTnorm (scaled) vs celltype ', alpha = 0.2)
 
 p2 <- plot_UMAP(merged_adt_adtnorm_umap$layout, run_umap = F, metadata_vector = merged_data$study, 
@@ -2065,39 +2097,33 @@ gridExtra::grid.arrange(p1,p2, ncol=2)
 
 ```
 
-# RUVIII
-
 ```{r}
-DefaultAssay(merged_data) <- 'ADT'
-merged_data$log2_adt_libsize <- log2(colsums(as.matrix(merged_data@assays$ADT@layers$counts)))
-
-# THIS WILL ERROR 
-merged_adt_prpc <- sc_PRPC_v2(merged_data,
-                           batch = 'study',
-                           libSize = 'log2_adt_libsize',
-                           npcs = 11,
-                           libSize.prps = T,
-                           batch.prps = T)
-
-
- merged_adt_ruv <- RUV_III(Y= as.matrix(t(log2(combined_matrix+1))), 
-                          Yrep = as.matrix(t(log2(combined_matrix+1))),
-                          ctl = rownames(combined_matrix) %in% rownames(combined_matrix),
-                          M = ruv::replicate.matrix(merged_data$celltype.l2_with_transfer),
-                          k = 10)
-
-merged_adt_ruv_pca_unscaled <- run_PCA(t(merged_adt_ruv), pcs = 11)
-merged_adt_ruv_pca_scaled <- run_PCA(t(scale(merged_adt_ruv)), pcs = 11)
-
-merged_adt_ruv_umap <- umap(merged_adt_ruv_pca_scaled$u)
+plot_UMAP(merged_adt_adtnorm_umap$layout, run_umap = F, metadata_vector = merged_data$log2_adt_libsize, 
+          title = 'vs libsize', alpha = 0.2, label_is_continuous = T, continuous_var_upper_lim = 13)
 
 ```
 
-```{r, fig.width= 8}
-p1 <- plot_UMAP(merged_adt_ruv_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l1_with_transfer, 
-          title = 'ADTnorm (scaled) vs celltype ', alpha = 0.2)
+# Harmony
 
-p2 <- plot_UMAP(merged_adt_ruv_umap$layout, run_umap = F, metadata_vector = merged_data$study, 
+```{r}
+
+merged_data <- harmony::RunHarmony(merged_data, 
+                                   group.by.vars = 'study',
+                                   reduction.use = 'adt_pca_scaled',
+                                   reduction.save = 'adt_harmony_raw_counts')
+
+adt_harmony_unscaled <- harmony::RunHarmony(data_mat = adt_pca_unscaled$u,
+                                            meta_data = merged_data$study)
+
+adt_harmony_raw_counts_umap <- umap(merged_data@reductions$adt_harmony_raw_counts@cell.embeddings)
+
+```
+
+```{r, fig.width= 10}
+p1 <- plot_UMAP(adt_harmony_raw_counts_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
+          title = 'Harmony (scaled raw counts) vs celltype ', alpha = 0.2)
+
+p2 <- plot_UMAP(adt_harmony_raw_counts_umap$layout, run_umap = F, metadata_vector = merged_data$study, 
           title = 'vs study', alpha = 0.2)
 
 gridExtra::grid.arrange(p1,p2, ncol=2)
@@ -2107,13 +2133,174 @@ gridExtra::grid.arrange(p1,p2, ncol=2)
 
 
 ```{r}
+plot_UMAP(adt_harmony_raw_counts_umap$layout, run_umap = F, metadata_vector = merged_data$log2_adt_libsize, 
+          title = 'vs libsize', alpha = 0.2, label_is_continuous = T, continuous_var_upper_lim = 13)
 
+```
+
+
+# RUVIII
+
+```{r}
+# THIS WILL ERROR 
+merged_adt_prpc <- sc_PRPC_v2(merged_data,
+                           batch = 'study',
+                           libSize = 'log2_adt_libsize',
+                           npcs = 11,
+                           libSize.prps = T,
+                           batch.prps = T)
+```
+
+```{r}
+ merged_adt_ruv <- RUV_III(Y= as.matrix(t(log2(combined_matrix+1))), 
+                          Yrep = as.matrix(t(log2(combined_matrix+1))),
+                          ctl = rownames(combined_matrix) %in% rownames(combined_matrix),
+                          M = ruv::replicate.matrix(merged_data$celltype.l2_with_transfer),
+                          k = 3)
+
+merged_adt_ruv_pca_unscaled <- run_PCA(t(merged_adt_ruv), pcs = 11)
+merged_adt_ruv_pca_scaled <- run_PCA(t(scale(merged_adt_ruv)), pcs = 11)
+
+merged_adt_ruv_umap <- umap(merged_adt_ruv_pca_scaled$u)
+
+```
+
+```{r, fig.width= 10}
+p1 <- plot_UMAP(merged_adt_ruv_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
+          title = 'RUV K5 (scaled) vs celltype ', alpha = 0.2)
+
+p2 <- plot_UMAP(merged_adt_ruv_umap$layout, run_umap = F, metadata_vector = merged_data$study, 
+          title = 'vs study', alpha = 0.2)
+
+gridExtra::grid.arrange(p1,p2, ncol=2)
+
+```
+
+
+```{r}
+ merged_adt_ruv_k5 <- RUV_III(Y= as.matrix(t(log2(combined_matrix+1))), 
+                          Yrep = as.matrix(t(log2(combined_matrix+1))),
+                          ctl = rownames(combined_matrix) %in% rownames(combined_matrix),
+                          M = ruv::replicate.matrix(merged_data$celltype.l2_with_transfer),
+                          k = 5)
+
+merged_adt_ruv_pca_unscaled <- run_PCA(t(merged_adt_ruv), pcs = 11)
+merged_adt_ruv_pca_scaled <- run_PCA(t(scale(merged_adt_ruv)), pcs = 11)
+
+merged_adt_ruv_umap <- umap(merged_adt_ruv_pca_scaled$u)
+
+```
+
+
+```{r, fig.width= 10}
+p1 <- plot_UMAP(merged_adt_ruv_umap_k5$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
+          title = 'RUV K2 (scaled) vs celltype ', alpha = 0.2)
+
+p2 <- plot_UMAP(merged_adt_ruv_umap_k5$layout, run_umap = F, metadata_vector = merged_data$study, 
+          title = 'vs study', alpha = 0.2)
+
+gridExtra::grid.arrange(p1,p2, ncol=2)
 
 
 ```
 
 
+```{r, fig.width= 10}
+p1 <- plot_UMAP(merged_adt_ruv_umap$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
+          title = 'RUV K2 (scaled) vs celltype ', alpha = 0.2)
 
+p2 <- plot_UMAP(merged_adt_ruv_umap$layout, run_umap = F, metadata_vector = merged_data$study, 
+          title = 'vs study', alpha = 0.2)
+
+gridExtra::grid.arrange(p1,p2, ncol=2)
+
+
+```
+
+
+```{r}
+plot_UMAP(merged_adt_ruv_umap$layout, run_umap = F, metadata_vector = merged_data$log2_adt_libsize, 
+          title = 'vs libsize', alpha = 0.2, label_is_continuous = T, continuous_var_upper_lim = 13)
+
+```
+
+# Silhouettes for celltype & batch
+```{r}
+
+merged_adt_metrics <- new("BenchmarkMetrics")
+
+unscaled_adt_pcs <- list(Raw_counts = adt_pca_unscaled$u,
+                         CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11)$u,
+                         DSB = merged_adt_dsb_pca_unscaled$u,
+                         Harmony = adt_harmony_unscaled,
+                         RUVIII = merged_adt_ruv_pca_unscaled$u,
+                         ADTnorm = merged_adtnorm_pca_unscaled$u)
+
+adt_silhouettes <- lapply(unscaled_adt_pcs,
+                          function(x){compute_silhouette(matrix = x,
+                                   label_vector = merged_data$celltype.l2_with_transfer,
+                                   result_format = 'per_cluster')})
+
+merged_adt_metrics@Silhouette <- adt_silhouettes
+
+```
+
+```{r}
+PlotMultipleSilhouette(merged_adt_metrics)
+
+```
+
+```{r}
+
+plot_linear_correlation(list(Raw_counts = adt_pca_unscaled,
+                         CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11),
+                         DSB = merged_adt_dsb_pca_unscaled,
+                         Harmony = list(u=adt_harmony_unscaled),
+                         RUVIII = merged_adt_ruv_pca_unscaled,
+                         ADTnorm = merged_adtnorm_pca_unscaled),
+                        dataset_names = c('Raw counts', 'CLR', 'DSB','Harmony', 'RUVIII', 'ADTnorm'),
+                        merged_data$log2_adt_libsize,
+                        'log2 adt libsize')
+
+
+```
+```{r}
+
+plot_vector_correlation(list(Raw_counts = adt_pca_unscaled,
+                         CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11),
+                         DSB = merged_adt_dsb_pca_unscaled,
+                         Harmony = list(u=adt_harmony_unscaled),
+                         RUVIII = merged_adt_ruv_pca_unscaled,
+                         ADTnorm = merged_adtnorm_pca_unscaled),
+                        dataset_names = c('Raw counts', 'CLR', 'DSB', 'Harmony', 'RUVIII', 'ADTnorm'),
+                        merged_data$celltype.l2_with_transfer,
+                        'celltypes',
+                        num_pcs = 10)
+
+
+```
+
+```{r}
+
+plot_vector_correlation(list(Raw_counts = adt_pca_unscaled,
+                         CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11),
+                         DSB = merged_adt_dsb_pca_unscaled,
+                         Harmony = list(u=adt_harmony_unscaled),
+                         RUVIII = merged_adt_ruv_pca_unscaled,
+                         ADTnorm = merged_adtnorm_pca_unscaled),
+                        dataset_names = c('Raw counts', 'CLR', 'DSB', 'Harmony', 'RUVIII', 'ADTnorm'),
+                        merged_data$study,
+                        'study')
+
+
+```
+
+```{r}
+
+
+
+
+```
 
 
 
