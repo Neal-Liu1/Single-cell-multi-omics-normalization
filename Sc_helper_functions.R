@@ -160,12 +160,15 @@ setMethod('FindNCG',
 # The benchmark metrics object 
 
 setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
-                                          Dataset = 'list',
-                                          Params = 'list',
+                                          Raw_data = 'matrix',
+                                          Metadata = 'data.frame',
+                                          Adj_data = 'list',
+                                          Reductions = 'list',
                                           RunningTime = 'numeric',
                                           Silhouette = 'list',
-                                          ARI = 'data.frame',
-                                          LISI = 'data.frame'))
+                                          ARI = 'list',
+                                          LISI = 'list'))
+
 
 
 
