@@ -163,7 +163,9 @@ setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
                                           Raw_data = 'matrix',
                                           Metadata = 'data.frame',
                                           Adj_data = 'list',
-                                          Reductions = 'list',
+                                          PCs = 'list',
+                                          UMAPs = 'list',
+                                          Latent_dims = 'list',
                                           RunningTime = 'numeric',
                                           Silhouette = 'list',
                                           ARI = 'list',
@@ -298,9 +300,168 @@ setMethod('PlotMultipleSilhouette',
 
 
 
+setGeneric('ComputeMultipleLISI',
+           function(obj, reductions , variables, metadata, metrics_obj)
+           {standardGeneric('ComputeMultipleLISI')})
+
+
+# Takes a list of reduction components (eg PCs) as dataframes or matrices (cells as rows and features as cols), 
+# and a dataframe of metadata and a vector of metadata variables,
+# Compute the LISI scores for every reduction for every variable
+# Returns a list of dataframes
+setMethod('ComputeMultipleLISI', 
+          signature = c(obj = 'list',
+                        reductions = NULL,
+                        variables = 'character',
+                        metadata = 'data.frame',
+                        metrics_obj = NULL),
+          function(obj, reductions , variables, metadata, metrics_obj){
+            LISI_scores <- lapply(obj, function(x){compute_lisi(x,
+                                                                meta_data = metadata,
+                                                                label_colnames = variables)})
+            return(LISI_scores)
+          })
+
+
+# Takes a metrics obj with reductions in the Reductions slot (reductions are list of dataframes of reduction components (eg PCs) (cells as rows and features as cols), 
+# and matadata as dataframe in the metadata slot,
+# Compute the LISI scores for every reduction for every variable
+# Returns the metrics obj with LISI scores in the LISI slots.
+setMethod('ComputeMultipleLISI', 
+          signature = c(obj = 'BenchmarkMetrics',
+                        reductions = NULL,
+                        variables = 'character',
+                        metadata = NULL,
+                        metrics_obj = NULL),
+          function(obj, reductions , variables, metadata, metrics_obj){
+            if(length(obj@Metadata) == 0)
+            {stop("Your Metrics obj doesn't have any metadata. Please add metadata first.")}
+            if(length(obj@PCs) == 0)
+            {stop("Your Metrics obj doesn't have any PCs. Please compute PCA first.")}
+            
+            reduction_matrix_list <- obj@PCs
+            metadata <- obj@Metadata
+            
+            LISI_scores <- lapply(reduction_matrix_list,
+                                  function(x){
+                                    compute_lisi(
+                                      x,
+                                      meta_data = metadata,
+                                      label_colnames = variables)})
+            obj@LISI <- LISI_scores
+            return(obj)
+          })
+
+
+setGeneric('PlotMultipleLISI',
+           function(obj, variable, reductions, aspect_ratio = 1.3, 
+                    title = NULL, levels = NULL)
+           {standardGeneric('PlotMultipleLISI')})
+
+setMethod('PlotMultipleLISI',
+          signature = c(obj = 'BenchmarkMetrics',
+                        reductions = NULL,
+                        variable = 'character'),
+          function(obj, variable, reductions, aspect_ratio, title, levels){
+            
+            if(!(variable %in% names(obj@LISI[[1]])))
+            {stop('LISI scores have not yet been computed for this variable you entered.')}
+            
+            scores <- unlist(lapply(obj@LISI, function(x){x[[variable]]}))
+            names <- rep(names(obj@LISI), each = ncol(obj@Raw_data))
+            data <- data.frame(LISI = scores, method = names)
+            
+            if(!is.null(levels))
+            {data$method <- factor(data$method, levels = levels)}
+            
+            ggplot(data, aes(x=method, y = LISI, fill=method))+
+              geom_boxplot(outlier.shape = NA)+
+              labs(x = NULL) +
+              ggtitle(title)+
+              theme_minimal()+
+              theme(legend.position = 'none',
+                    panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
+                    aspect.ratio = 1/aspect_ratio,
+                    axis.line = element_line(colour = "grey50", linewidth = 0.7),
+                    panel.grid.major = element_line(color = "grey96"),
+                    axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
+          })
 
 
 
+
+# Linear and vector correlations as S4 methods
+
+setGeneric('PlotCorrelations', 
+           function(obj,
+                    variable,
+                    reductions = NULL,
+                    num_pcs = 10,
+                    title = 'Correlation plot')
+           {standardGeneric('PlotCorrelations')})
+
+setMethod('PlotCorrelations',
+          signature = c(obj = 'BenchmarkMetrics',
+                        variable = 'character',
+                        reductions = NULL),
+          function(obj,
+                   variable,
+                   reductions,
+                   num_pcs,
+                   title){
+            
+            var = obj@Metadata[[variable]]
+            reductions = obj@PCs
+            
+            if(class(var) %in% c('factor', 'character')){
+              dummies <- fastDummies::dummy_cols(var)[,-1]
+              cancor_scores <- sapply(reductions, function(m) {lapply(1:num_pcs, function(y) {cca <- stats::cancor(x= m[,1:y, drop=F], 
+                                                                                                                   y= dummies) 
+              1 - prod(1 - cca$cor^2)})}) %>% unlist()
+              PCs <- rep(paste0('PC1:', 1:num_pcs), length(reductions))
+              Datasets <- rep(names(reductions), each = num_pcs)
+              Datasets <- factor(Datasets, levels = obj@Algorithm)
+              pc_correlations <- data.frame(PCs, cancor_scores, Datasets)
+              pc_correlations$PCs <- factor(pc_correlations$PCs, levels = paste0('PC1:', 1:num_pcs))
+              
+              return(
+                ggplot(pc_correlations, aes(x = PCs, y = cancor_scores, color = Datasets, group = Datasets)) +
+                  geom_line(size=0.5,alpha=0.8) +
+                  geom_point(alpha=0.8) +
+                  labs(x = 'Principal Components', y = 'Correlation', color = 'Dataset') +
+                  ylim(0,1) +
+                  theme_minimal() +
+                  theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
+                        panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+                        panel.grid.major = element_line(color = "grey96"),
+                        aspect.ratio = 1/1.2) +
+                  ggtitle(title)
+              )}
+            
+            if(class(var) %in% 'numeric'){
+              R_squared <- sapply(reductions, function(matrix, var, num_pcs) {
+                sapply(1:num_pcs, function(y) {
+                  lm_model <- summary(lm(var ~ matrix[,1:y]))$r.squared})
+              }, num_pcs = num_pcs, var = var) %>% as.vector()
+              PCs <- rep(paste0('PC1:', 1:num_pcs), length(reductions))
+              Datasets <- rep(names(reductions), each = num_pcs) %>% factor(levels = obj@Algorithm)
+              pc_correlations <- data.frame(PCs, R_squared, Datasets)
+              pc_correlations$PCs <- factor(pc_correlations$PCs, levels = paste0('PC1:', 1:num_pcs))
+              
+              return(
+                ggplot(pc_correlations, aes(x = PCs, y = R_squared, color = Datasets, group = Datasets)) +
+                  geom_line(size=0.5,alpha=0.8) +
+                  geom_point(alpha=0.8) +
+                  labs(x = 'Principal Components', y = 'R-squared', color = 'Dataset') +
+                  ylim(0,1) +
+                  ggtitle(title)+
+                  theme_minimal() +
+                  theme(axis.line = element_line(colour = "grey83", linewidth=1.1),
+                        panel.border = element_rect(colour = "grey90", fill=NA, size=0.7),
+                        panel.grid.major = element_line(color = "grey96"),
+                        aspect.ratio = 1/1.2)
+              )}
+          })
 
 
 
