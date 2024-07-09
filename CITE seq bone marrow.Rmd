@@ -1754,7 +1754,7 @@ merged_adt_prpc <- sc_PRPC_v2(merged_data,
                           Yrep = as.matrix(t(log2(combined_matrix+1))),
                           ctl = rownames(combined_matrix) %in% rownames(combined_matrix),
                           M = ruv::replicate.matrix(merged_data$celltype.l2_with_transfer),
-                          k = 2)
+                          k = 3)
 
 merged_adt_ruv_pca_unscaled <- run_PCA(t(merged_adt_ruv), pcs = 11)
 merged_adt_ruv_pca_scaled <- run_PCA(t(scale(merged_adt_ruv)), pcs = 11)
@@ -1811,16 +1811,21 @@ plot_UMAP(merged_adt_ruv_umap$layout, run_umap = F, metadata_vector = merged_dat
 # Silhouettes for celltype & batch
 ```{r}
 
-merged_adt_metrics <- new("BenchmarkMetrics")
+merged_adt_metrics <- new("BenchmarkMetrics", 
+                          Raw_data = as.matrix(combined_matrix),
+                          Metadata = merged_data@meta.data)
 
-unscaled_adt_pcs <- list(Raw_counts = adt_pca_unscaled$u,
-                         CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11)$u,
-                         DSB = merged_adt_dsb_pca_unscaled$u,
-                         Harmony = adt_harmony_unscaled,
-                         RUVIII = merged_adt_ruv_pca_unscaled$u,
-                         ADTnorm = merged_adtnorm_pca_unscaled$u)
+adt_levels <- c('Raw_counts', 'ADTnorm', 'CLR', 'DSB', 'Harmony', 'RUVIII')
+merged_adt_metrics@Algorithm <- adt_levels
 
-adt_silhouettes <- lapply(unscaled_adt_pcs,
+merged_adt_metrics@PCs <- list(Raw_counts = adt_pca_unscaled$u,
+                                      CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11)$u,
+                                      DSB = merged_adt_dsb_pca_unscaled$u,
+                                      Harmony = list(u=adt_harmony_unscaled)$u,
+                                      RUVIII = merged_adt_ruv_pca_unscaled$u,
+                                      ADTnorm = merged_adtnorm_pca_unscaled$u)
+
+adt_silhouettes <- parallel::mclapply(merged_adt_metrics@PCs,
                           function(x){compute_silhouette(matrix = x,
                                    label_vector = merged_data$celltype.l2_with_transfer,
                                    result_format = 'per_cluster')})
@@ -1848,8 +1853,6 @@ plot_linear_correlation(list(Raw_counts = adt_pca_unscaled,
 
 
 ```
-
-
 
 ```{r}
 
@@ -1882,116 +1885,9 @@ plot_vector_correlation(list(Raw_counts = adt_pca_unscaled,
 
 ```
 
-
-# Compute & plot Multiple LISI functions/methods
 ```{r}
 
-setGeneric('ComputeMultipleLISI',
-           function(obj, reductions , variables, metadata, metrics_obj)
-             {standardGeneric('ComputeMultipleLISI')})
-
-
-# Takes a list of reduction components (eg PCs) as dataframes or matrices (cells as rows and features as cols), 
-# and a dataframe of metadata and a vector of metadata variables,
-# Compute the LISI scores for every reduction for every variable
-# Returns a list of dataframes
-setMethod('ComputeMultipleLISI', 
-          signature = c(obj = 'list',
-                        reductions = NULL,
-                        variables = 'character',
-                        metadata = 'data.frame',
-                        metrics_obj = NULL),
-          function(obj, reductions , variables, metadata, metrics_obj){
-            LISI_scores <- lapply(obj, function(x){compute_lisi(x,
-                                                    meta_data = metadata,
-                                                    label_colnames = variables)})
-            return(LISI_scores)
-          })
-
-
-# Takes a metrics obj with reductions in the Reductions slot (reductions are list of dataframes of reduction components (eg PCs) (cells as rows and features as cols), 
-# and matadata as dataframe in the metadata slot,
-# Compute the LISI scores for every reduction for every variable
-# Returns the metrics obj with LISI scores in the LISI slots.
-setMethod('ComputeMultipleLISI', 
-          signature = c(obj = 'BenchmarkMetrics',
-                        reductions = NULL,
-                        variables = 'character',
-                        metadata = NULL,
-                        metrics_obj = NULL),
-          function(obj, reductions , variables, metadata, metrics_obj){
-            if(length(obj@Metadata) == 0)
-              {stop("Your Metrics obj doesn't have any metadata. Please add metadata first.")}
-            if(length(obj@Reductions) == 0)
-              {stop("Your Metrics obj doesn't have any reductions. Please add reductions first.")}
-            
-            reduction_matrix_list <- obj@Reductions
-            metadata <- obj@Metadata
-            
-            LISI_scores <- lapply(reduction_matrix_list,
-                                  function(x){
-                                    compute_lisi(
-                                      x,
-                                      meta_data = metadata,
-                                      label_colnames = variables)})
-            obj@LISI <- LISI_scores
-            return(obj)
-          })
-
-
-setGeneric('PlotMultipleLISI',
-           function(obj, variable, reductions, aspect_ratio = 1.3, 
-                    title = NULL, levels = NULL)
-             {standardGeneric('PlotMultipleLISI')})
-
-setMethod('PlotMultipleLISI',
-          signature = c(obj = 'BenchmarkMetrics',
-                        reductions = NULL,
-                        variable = 'character'),
-          function(obj, variable, reductions, aspect_ratio, title, levels){
-            
-            if(!(variable %in% names(obj@LISI[[1]])))
-            {stop('LISI scores have not yet been computed for this variable you entered.')}
-            
-            scores <- unlist(lapply(obj@LISI, function(x){x[[variable]]}))
-            names <- rep(names(obj@LISI), each = ncol(obj@Raw_data))
-            data <- data.frame(LISI = scores, method = names)
-            
-            if(!is.null(levels))
-              {data$method <- factor(data$method, levels = levels)}
-            
-            ggplot(data, aes(x=method, y = LISI, fill=method))+
-              geom_boxplot(outlier.shape = NA)+
-              labs(x = NULL) +
-              ggtitle(title)+
-              theme_minimal()+
-              theme(legend.position = 'none',
-                    panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
-                    aspect.ratio = 1/aspect_ratio,
-                    axis.line = element_line(colour = "grey50", linewidth = 0.7),
-                    panel.grid.major = element_line(color = "grey96"),
-                    axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
-          })
-
-
-```
-
-
-```{r}
-merged_adt_metrics <- new("BenchmarkMetrics", 
-                          Raw_data = as.matrix(combined_matrix),
-                          Metadata = merged_data@meta.data)
-
-merged_adt_metrics@Reductions <- list(Raw_counts = adt_pca_unscaled$u,
-                                      CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11)$u,
-                                      DSB = merged_adt_dsb_pca_unscaled$u,
-                                      Harmony = list(u=adt_harmony_unscaled)$u,
-                                      RUVIII = merged_adt_ruv_pca_unscaled$u,
-                                      ADTnorm = merged_adtnorm_pca_unscaled$u)
-
-merged_adt_metrics<- ComputeMultipleLISI(merged_adt_metrics, variables = c('study', 'celltype.l2_with_transfer'))
-
-adt_levels <- c('Raw_counts', 'ADTnorm', 'CLR', 'DSB', 'Harmony', 'RUVIII')
+merged_adt_metrics <- ComputeMultipleLISI(merged_adt_metrics, variables = c('study', 'celltype.l2_with_transfer'))
 
 ```
 
@@ -2007,20 +1903,72 @@ gridExtra::grid.arrange(p1,p2, ncol =2)
 
 merged_ARIs <- lapply(a, function(x){compute_ARI(x,merged_data$celltype.l2_with_transfer)})
 
-ggplot(data.frame(names = names(merged_ARIs), ARI = unlist(merged_ARIs)), aes(x= names , y = ARI, fill = names))+
-  geom_bar(stat = "identity") +
+merged_ARIs_df <- data.frame(names = names(merged_ARIs), ARI = unlist(merged_ARIs))
+merged_ARIs_df$names <- factor(merged_ARIs_df$names, levels = adt_levels)
+
+ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
+  geom_bar(stat = "identity", colour = 'black') +
   theme_minimal() +
-  labs(title = "Bar Plot of ARIs",
+  labs(title = "ARIs of different methods",
        x = NULL,
        y = "ARI scores")+
-  theme(panel.border=element_rect(colour = "grey85", fill=NA, size=0.8),
-          aspect.ratio = 1,
-          axis.line = element_line(colour = "grey70", linewidth = 1),
-          axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
-          panel.grid.major = element_line(color = "grey96"),
-        legend.position = 'none')
+  theme(legend.position = 'none',
+                    panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
+                    aspect.ratio = 1/1.1,
+                    axis.line = element_line(colour = "grey45", linewidth = 0.8),
+                    panel.grid.major = element_line(color = "grey96"),
+                    axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
 
 ```
+
+
+# ARI function
+```{r}
+
+setGeneric('ComputeARI',
+           function(obj, labels, hclust_method = 'complete', distance_type  = 'euclidean'){standardGeneric('ComputeARI')})
+
+setMethod('ComputeARI', 
+          signature = c(obj = 'BenchmarkMetrics', labels = 'character'),
+          function(obj, labels, hclust_method, distance_type){
+            labels <- obj@Metadata[[labels]]
+            
+            clusters <- lapply(obj@PCs, function(x){
+              cutree(hclust(d= dist(x, method = distance_type), 
+                             method = hclust_method),
+                      k= length(unique(labels)))
+              })
+            
+            print(clusters)
+            
+            #ARIs <- lapply(1:length(clusters), function(x){
+            #  mclust::adjustedRandIndex(clusters[[x]], labels)
+            #})
+            
+            
+              
+          })
+
+
+```
+
+```{r}
+PlotCorrelations(merged_adt_metrics, variable = 'study', num_pcs = 10)
+
+```
+
+```{r}
+PlotCorrelations(merged_adt_metrics, variable = 'log2_adt_libsize', num_pcs = 10)
+
+```
+
+
+```{r}
+
+
+
+```
+
 
 
 # Export the merged data to run in python for totalVI and LIGER
