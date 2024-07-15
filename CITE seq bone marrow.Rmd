@@ -57,8 +57,6 @@ library(harmony)
 source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 # source('~/HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 
-# install.packages('rliger')
-library(rliger)
 # BiocManager::install("batchelor")
 library(batchelor)
 
@@ -68,6 +66,7 @@ library(SeuratWrappers)
 
 #devtools::install_github("immunogenomics/lisi")
 library(lisi)
+library(ggpubr)
 
 ```
 
@@ -1818,75 +1817,35 @@ merged_adt_metrics <- new("BenchmarkMetrics",
 adt_levels <- c('Raw_counts', 'ADTnorm', 'CLR', 'DSB', 'Harmony', 'RUVIII')
 merged_adt_metrics@Algorithm <- adt_levels
 
-merged_adt_metrics@PCs <- list(Raw_counts = adt_pca_unscaled$u,
-                                      CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11)$u,
-                                      DSB = merged_adt_dsb_pca_unscaled$u,
-                                      Harmony = list(u=adt_harmony_unscaled)$u,
-                                      RUVIII = merged_adt_ruv_pca_unscaled$u,
-                                      ADTnorm = merged_adtnorm_pca_unscaled$u)
+merged_adt_metrics@PCs <- list(
+  Raw_counts = adt_pca_unscaled$u,
+  CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11)$u,
+  DSB = merged_adt_dsb_pca_unscaled$u,
+  Harmony = list(u=adt_harmony_unscaled)$u,
+  RUVIII = merged_adt_ruv_pca_unscaled$u,
+  ADTnorm = merged_adtnorm_pca_unscaled$u
+  )
 
-adt_silhouettes <- parallel::mclapply(merged_adt_metrics@PCs,
-                          function(x){compute_silhouette(matrix = x,
-                                   label_vector = merged_data$celltype.l2_with_transfer,
-                                   result_format = 'per_cluster')})
+adt_silhouettes <- lapply(
+  merged_adt_metrics@PCs,
+  function(x)
+    {compute_silhouette(
+      matrix = x,
+      label_vector = merged_data$celltype.l2_with_transfer,
+      result_format = 'per_cluster')
+    }
+  )
 
 merged_adt_metrics@Silhouette <- adt_silhouettes
 
 ```
 
 ```{r}
-PlotMultipleSilhouette(merged_adt_metrics)
+PlotMultipleSilhouette(merged_adt_metrics, aspect_ratio = 1.3, title = 'Silhouette score per celltype for 2 study adts')
 
 ```
 
 ```{r}
-
-plot_linear_correlation(list(Raw_counts = adt_pca_unscaled,
-                         CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11),
-                         DSB = merged_adt_dsb_pca_unscaled,
-                         Harmony = list(u=adt_harmony_unscaled),
-                         RUVIII = merged_adt_ruv_pca_unscaled,
-                         ADTnorm = merged_adtnorm_pca_unscaled),
-                        dataset_names = c('Raw counts', 'CLR', 'DSB','Harmony', 'RUVIII', 'ADTnorm'),
-                        merged_data$log2_adt_libsize,
-                        'log2 adt libsize')
-
-
-```
-
-```{r}
-
-plot_vector_correlation(list(Raw_counts = adt_pca_unscaled,
-                         CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11),
-                         DSB = merged_adt_dsb_pca_unscaled,
-                         Harmony = list(u=adt_harmony_unscaled),
-                         RUVIII = merged_adt_ruv_pca_unscaled,
-                         ADTnorm = merged_adtnorm_pca_unscaled),
-                        dataset_names = c('Raw counts', 'CLR', 'DSB', 'Harmony', 'RUVIII', 'ADTnorm'),
-                        merged_data$celltype.l2_with_transfer,
-                        'celltypes',
-                        num_pcs = 10)
-
-
-```
-
-```{r}
-
-plot_vector_correlation(list(Raw_counts = adt_pca_unscaled,
-                         CLR = run_PCA((merged_data@assays$ADT@layers$data), pcs = 11),
-                         DSB = merged_adt_dsb_pca_unscaled,
-                         Harmony = list(u=adt_harmony_unscaled),
-                         RUVIII = merged_adt_ruv_pca_unscaled,
-                         ADTnorm = merged_adtnorm_pca_unscaled),
-                        dataset_names = c('Raw counts', 'CLR', 'DSB', 'Harmony', 'RUVIII', 'ADTnorm'),
-                        merged_data$study,
-                        'study')
-
-
-```
-
-```{r}
-
 merged_adt_metrics <- ComputeMultipleLISI(merged_adt_metrics, variables = c('study', 'celltype.l2_with_transfer'))
 
 ```
@@ -1925,12 +1884,13 @@ ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
 # ARI function
 ```{r}
 
-setGeneric('ComputeARI',
-           function(obj, labels, hclust_method = 'complete', distance_type  = 'euclidean'){standardGeneric('ComputeARI')})
+setGeneric('ComputeARIs',
+           function(obj, labels, hclust_method = 'complete', distance_type  = 'euclidean'){standardGeneric('ComputeARIs')})
 
-setMethod('ComputeARI', 
+setMethod('ComputeARIs', 
           signature = c(obj = 'BenchmarkMetrics', labels = 'character'),
           function(obj, labels, hclust_method, distance_type){
+            label_name <- labels
             labels <- obj@Metadata[[labels]]
             
             clusters <- lapply(obj@PCs, function(x){
@@ -1939,37 +1899,134 @@ setMethod('ComputeARI',
                       k= length(unique(labels)))
               })
             
-            print(clusters)
+            ARIs <- lapply(1:length(clusters), function(x){
+              mclust::adjustedRandIndex(clusters[[x]], labels)
+            })
             
-            #ARIs <- lapply(1:length(clusters), function(x){
-            #  mclust::adjustedRandIndex(clusters[[x]], labels)
-            #})
+            names(ARIs) <- names(obj@PCs)
+            obj@ARI[[label_name]] <- ARIs
+            return(obj)
             
+          })
+
+
+setGeneric('PlotARIs',
+           function(obj, variable, title = "ARIs of different methods")
+             {standardGeneric('PlotARIs')})
+
+setMethod('PlotARIs',
+          signature= 'BenchmarkMetrics',
+          function(obj, variable, title){
+            merged_ARIs_df <- data.frame(names = names(obj@ARI[[variable]]), ARI = unlist(obj@ARI[[variable]]))
+            merged_ARIs_df$names <- factor(merged_ARIs_df$names, levels = obj@Algorithm)
+            ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
+             geom_bar(stat = "identity", colour = 'black') +
+             theme_minimal() +
+             labs(title = title,
+                  x = NULL,
+                  y = "ARI scores")+
+             theme(legend.position = 'none',
+                    panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
+                    aspect.ratio = 1/1.1,
+                    axis.line = element_line(colour = "grey45", linewidth = 0.8),
+                    panel.grid.major = element_line(color = "grey96"),
+                    axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
+          })
+
+
+```
+
+
+```{r}
+
+sample <- sample(nrow(merged_adt_metrics@PCs$Raw_counts), 1000)
+test <- new('BenchmarkMetrics', 
+            Algorithm = merged_adt_metrics@Algorithm,
+            Metadata = merged_data@meta.data[sample,])
+test@PCs <- lapply(merged_adt_metrics@PCs, function(x){x[sample,]})
+test@Raw_data <- merged_adt_metrics@Raw_data[,sample]
+
+test <- ComputeARIs(test, 'celltype.l2_with_transfer')
+test <- ComputeARIs(test, 'study')
+p1 <- PlotARIs(test, 'celltype.l2_with_transfer', title = 'Celltype ARI')
+p2 <- PlotARIs(test, 'study', title = 'Study ARI')
+
+gridExtra::grid.arrange(p1,p2, ncol=2)
+
+```
+
+```{r, fig.width= 9, fig.height= 4}
+
+PlotMultipleCorrelations(merged_adt_metrics, 
+                         variables = c('study','log2_adt_libsize', 'celltype.l2_with_transfer'),
+                         titles = c('Study','ADT libsize', 'Celltypes'))
+
+```
+# The overall normalization method
+```{r}
+
+setGeneric(
+  'NormalizeADT',
+  function(obj, params)
+    {standardGeneric('NormalizeADT')
+    }
+  )
+
+setMethod(
+  'NormalizeADT',
+  signature = c(obj = 'BenchmarkMetrics',
+                params = 'list'),
+  function(obj, params)
+    {
+    if(is.null(obj@Raw_data))
+      {stop('Your metrics object does not have any raw data')}
+    if(is.null(obj@Metadata))
+      {stop('Your metrics object does not have any metadata')}
+    
+    
+    
+    }
+  )
+
+
+```
+
+```{r}
+
+params <- list()
+test <- NormalizeADT(test, params = params)
+
+
+```
+
+# HVG conservation
+```{r}
+
+setGeneric('ComputeHVG_Conservation', function(raw_hvgs, adj_matrix, flavour = 'vst')
+  {standardGeneric('ComputeHVG_Conservation')})
+
+setMethod('ComputeHVG_Conservation', 
+          signature = c(raw_hvgs = 'logical',
+                        adj_matrix = 'matrix'),
+          function(raw_hvgs, adj_matrix, flavour){
             
-              
+            normalized_hvgs <- Seurat::FindVariableFeatures(
+              adj_matrix,selection.method = flavour
+              )[['variable']]
+            
+            return(mean(raw_hvgs == normalized_hvgs))
+            
           })
 
 
 ```
 
 ```{r}
-PlotCorrelations(merged_adt_metrics, variable = 'study', num_pcs = 10)
+
+ComputeHVG_Conservation(Seurat::FindVariableFeatures(merged_adt_metrics@Raw_data, selection.method = 'vst')[['variable']],
+                        t(merged_adtnorm))
 
 ```
-
-```{r}
-PlotCorrelations(merged_adt_metrics, variable = 'log2_adt_libsize', num_pcs = 10)
-
-```
-
-
-```{r}
-
-
-
-```
-
-
 
 # Export the merged data to run in python for totalVI and LIGER
 ```{r}
