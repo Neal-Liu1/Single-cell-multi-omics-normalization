@@ -464,4 +464,55 @@ setMethod('PlotCorrelations',
           })
 
 
+# Plot multiple correlation plots in a panel
+
+setGeneric('PlotMultipleCorrelations', function(obj, variables, reductions = 'all', num_pcs = 10, titles = NULL)
+{standardGeneric('PlotMultipleCorrelations')})
+
+setMethod('PlotMultipleCorrelations',
+          signature = c(obj='BenchmarkMetrics',
+                        variables = 'character'),
+          function(obj, variables, reductions, num_pcs, titles){
+            
+            theme <- theme(legend.position = 'none',
+                           axis.line = element_line(colour = "grey33", linewidth=0.5),
+                           panel.border = element_blank(),
+                           panel.grid.major = element_blank(),
+                           panel.grid.minor = element_blank(),
+                           axis.text.x = element_text(angle = 45,hjust = 1),
+                           axis.title.x  = element_blank(),
+                           axis.title.y = element_blank(),
+                           plot.title = element_text(hjust = 0.5),
+                           axis.line.y = element_blank(),
+                           axis.text.y = element_blank())
+            
+            plots <- lapply(variables, function(x)
+            {PlotCorrelations(obj, variable = x, num_pcs = num_pcs, title = x) +
+                theme})
+            
+            if(!(is.null(titles))){
+              plots <- lapply(1:length(plots), 
+                              function(x){plots[[x]]$labels$title <- titles[[x]]; plots[[x]]})}
+            
+            plots[[1]] <- plots[[1]] +
+              theme(legend.position = 'none',
+                    axis.line = element_line(colour = "grey33", linewidth=0.5),
+                    panel.border = element_blank(),
+                    panel.grid.major = element_blank(),
+                    panel.grid.minor = element_blank(),
+                    axis.text.x = element_text(angle = 45,hjust = 1),
+                    plot.title = element_text(hjust = 0.5),
+                    axis.line.y = element_line(),
+                    axis.text.y = element_text())
+            
+            return(ggpubr::ggarrange(plotlist = c(plots),
+                                     ncol = length(plots),
+                                     widths = c(rep(1,length(plots))), 
+                                     common.legend = T, 
+                                     legend = 'right',
+                                     align = 'v')
+            )
+          }
+)
+
 
