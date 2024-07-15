@@ -1937,24 +1937,6 @@ setMethod('PlotARIs',
 ```
 
 
-```{r}
-
-sample <- sample(nrow(merged_adt_metrics@PCs$Raw_counts), 1000)
-test <- new('BenchmarkMetrics', 
-            Algorithm = merged_adt_metrics@Algorithm,
-            Metadata = merged_data@meta.data[sample,])
-test@PCs <- lapply(merged_adt_metrics@PCs, function(x){x[sample,]})
-test@Raw_data <- merged_adt_metrics@Raw_data[,sample]
-
-test <- ComputeARIs(test, 'celltype.l2_with_transfer')
-test <- ComputeARIs(test, 'study')
-p1 <- PlotARIs(test, 'celltype.l2_with_transfer', title = 'Celltype ARI')
-p2 <- PlotARIs(test, 'study', title = 'Study ARI')
-
-gridExtra::grid.arrange(p1,p2, ncol=2)
-
-```
-
 ```{r, fig.width= 9, fig.height= 4}
 
 PlotMultipleCorrelations(merged_adt_metrics, 
@@ -1962,12 +1944,13 @@ PlotMultipleCorrelations(merged_adt_metrics,
                          titles = c('Study','ADT libsize', 'Celltypes'))
 
 ```
+
 # The overall normalization method
 ```{r}
 
 setGeneric(
   'NormalizeADT',
-  function(obj, params)
+  function(obj, params, batch_variable = 'batch', num_pcs = 10)
     {standardGeneric('NormalizeADT')
     }
   )
@@ -1976,14 +1959,54 @@ setMethod(
   'NormalizeADT',
   signature = c(obj = 'BenchmarkMetrics',
                 params = 'list'),
-  function(obj, params)
+  function(obj, params, batch_variable, num_pcs)
     {
     if(is.null(obj@Raw_data))
       {stop('Your metrics object does not have any raw data')}
     if(is.null(obj@Metadata))
       {stop('Your metrics object does not have any metadata')}
     
+    message('Starting DSB')
+    start <- Sys.time()
+    obj@Adj_data[['DSB']] <- dsb::ModelNegativeADTnorm(
+      t(obj@Raw_data), 
+      use.isotype.control = F)
+    obj@RunningTime[['DSB']] <- Sys.time() - start
+    obj@Adj_data[['DSB']] <- obj@Adj_data[['DSB']] %>% t()
     
+    message('Starting CLR')
+    start <- Sys.time()
+    obj@Adj_data[['CLR']] <- NormalizeData(
+      obj@Raw_data, 
+      normalization.method = 'CLR', 
+      margin = 2)
+    obj@RunningTime[['CLR']] <- Sys.time() - start
+    
+    message('Starting PCA for raw counts')
+    obj@PCs[['Raw_counts']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
+    
+    message('Starting Harmony on PCA for raw counts')
+    start <- Sys.time()
+    obj@PCs[['Harmony']] <- harmony::RunHarmony(
+      data_mat = obj@PCs[['Raw_counts']],
+      meta_data = obj@Metadata[[batch_variable]])
+    obj@RunningTime[['Harmony']] <- Sys.time() - start
+    
+    message('Starting ADTnorm')
+    start <- Sys.time()
+    obj@Adj_data[['ADTnorm']] <- ADTnorm(
+      cell_x_adt = as.matrix(t(obj@Raw_data)), 
+      cell_x_feature = data.frame(sample = obj@Metadata[[batch_variable]]),
+      save_outpath = '/vast/scratch/users/liu.ne/')
+    obj@RunningTime[['ADTnorm']] <- Sys.time() - start
+    obj@Adj_data[['ADTnorm']] <- obj@Adj_data[['ADTnorm']] %>% t()
+    
+    message('Starting PCA for the adjusted data')
+    obj@PCs[['DSB']] <- run_PCA(obj@Adj_data[['DSB']], pcs = num_pcs)$u
+    obj@PCs[['CLR']] <- run_PCA(obj@Adj_data[['CLR']], pcs = num_pcs)$u
+    obj@PCs[['ADTnorm']] <- run_PCA(obj@Adj_data[['ADTnorm']], pcs = num_pcs)$u
+    
+    return(obj)
     
     }
   )
@@ -1994,37 +2017,51 @@ setMethod(
 ```{r}
 
 params <- list()
-test <- NormalizeADT(test, params = params)
 
+sample <- sample(nrow(merged_adt_metrics@PCs$Raw_counts), 3000)
+test <- new('BenchmarkMetrics', 
+            Algorithm = merged_adt_metrics@Algorithm,
+            Metadata = merged_data@meta.data[sample,],
+            Raw_data = merged_adt_metrics@Raw_data[,sample])
 
-```
-
-# HVG conservation
-```{r}
-
-setGeneric('ComputeHVG_Conservation', function(raw_hvgs, adj_matrix, flavour = 'vst')
-  {standardGeneric('ComputeHVG_Conservation')})
-
-setMethod('ComputeHVG_Conservation', 
-          signature = c(raw_hvgs = 'logical',
-                        adj_matrix = 'matrix'),
-          function(raw_hvgs, adj_matrix, flavour){
-            
-            normalized_hvgs <- Seurat::FindVariableFeatures(
-              adj_matrix,selection.method = flavour
-              )[['variable']]
-            
-            return(mean(raw_hvgs == normalized_hvgs))
-            
-          })
-
+test <- NormalizeADT(test, params = params, batch_variable = 'study')
 
 ```
 
 ```{r}
 
-ComputeHVG_Conservation(Seurat::FindVariableFeatures(merged_adt_metrics@Raw_data, selection.method = 'vst')[['variable']],
-                        t(merged_adtnorm))
+test <- ComputeARIs(test, 'celltype.l2_with_transfer')
+test <- ComputeARIs(test, 'study')
+p1 <- PlotARIs(test, 'celltype.l2_with_transfer', title = 'Celltype ARI')
+p2 <- PlotARIs(test, 'study', title = 'Study ARI')
+
+gridExtra::grid.arrange(p1,p2, ncol=2)
+
+
+```
+
+```{r}
+test <- ComputeMultipleLISI(test, variables = c('study', 'celltype.l2_with_transfer'))
+
+```
+
+```{r}
+p1 <- PlotMultipleLISI(test, 'study', aspect_ratio = 1.1, title = 'Study LISI', levels = test@Algorithm)
+p2 <- PlotMultipleLISI(test, 'celltype.l2_with_transfer', aspect_ratio = 1.1, 
+                 title = 'Celltype LISI', levels = test@Algorithm)
+gridExtra::grid.arrange(p1,p2, ncol =2)
+
+```
+
+```{r}
+
+PlotMultipleCorrelations(test, c('study', 'celltype.l2_with_transfer', 'log2_adt_libsize'))
+
+```
+
+```{r}
+
+PlotHVG_Conservation(test, batch_variable = 'study')
 
 ```
 
