@@ -1,4 +1,56 @@
 
+# HVG conservation
+setGeneric('PlotHVG_Conservation', 
+           function(obj, batch_variable = 'batch', flavour = 'vst', title = 'HVG conservation plot')
+           {standardGeneric('PlotHVG_Conservation')})
+
+# Take a metrics obj with populated adjusted data slots, 
+# compute the percentage of HVGs between the raw data and all the adjusted datasets,
+# outputting a bar graph of percentage for each adjusted dataset.
+# if raw data has multiple batches, use common HVGs across all batches instead.
+
+setMethod('PlotHVG_Conservation', 
+          signature = c(obj = 'BenchmarkMetrics'),
+          function(obj, batch_variable, flavour, title)
+          {
+            batch_vector <- obj@Metadata[[batch_variable]]
+            unique_batches <- unique(batch_vector)
+            batch_data_list <- lapply(unique_batches, function(batch){
+              obj@Raw_data[, batch_vector == batch]})
+            
+            batch_hvgs <- lapply(batch_data_list, function(x)
+            {Seurat::FindVariableFeatures(
+              obj@Raw_data,
+              selection.method = flavour)[['variable']]
+            }) %>% as.data.frame()
+            
+            common_hvgs <- rowSums(batch_hvgs) == length(unique_batches)
+            
+            normalized_hvgs <- lapply(obj@Adj_data, function(x)
+            {Seurat::FindVariableFeatures(x, selection.method = flavour)[['variable']]
+            })
+            
+            hvg_conserv_scores <- lapply(normalized_hvgs, function(x)
+            {mean(x & common_hvgs)}) 
+            df <- data.frame(method = names(hvg_conserv_scores),
+                             values = unlist(hvg_conserv_scores))
+            df$method <- factor(df$method, levels = obj@Algorithm)
+            
+            return(
+              ggplot(df, aes(x= method, y = values, fill = method))+
+                geom_bar(stat = "identity", colour = 'black') +
+                theme_minimal() +
+                labs(title = title, x = NULL, y = "% HVG conservation")+
+                theme(legend.position = 'none',
+                      panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
+                      aspect.ratio = 1/1.1,
+                      axis.line = element_line(colour = "grey45", linewidth = 0.8),
+                      panel.grid.major = element_line(color = "grey96"),
+                      axis.text.x = element_text(size = 10,angle = 45,hjust = 1)))
+            
+          })
+
+
 
 # Plot umap
 plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/1, run_umap = T, label_is_continuous = F, 
@@ -166,7 +218,7 @@ setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
                                           PCs = 'list',
                                           UMAPs = 'list',
                                           Latent_dims = 'list',
-                                          RunningTime = 'numeric',
+                                          RunningTime = 'list',
                                           Silhouette = 'list',
                                           ARI = 'list',
                                           LISI = 'list'))
@@ -247,7 +299,9 @@ setMethod('ComputeMultipleSilhouette',
 setGeneric('PlotMultipleSilhouette',
            function(metrics_obj, 
                     subset = 'all', 
-                    plot_type = 'violin'){
+                    plot_type = 'violin',
+                    title = NULL,
+                    aspect_ratio = 1.2){
              standardGeneric('PlotMultipleSilhouette')
            }
 )
@@ -256,7 +310,9 @@ setMethod('PlotMultipleSilhouette',
           signature = c(metrics_obj = 'BenchmarkMetrics'),
           function(metrics_obj, 
                    subset, 
-                   plot_type){
+                   plot_type,
+                   title,
+                   aspect_ratio){
             
             if(all(subset == 'all')){
               merged_data <- do.call(rbind, metrics_obj@Silhouette)
@@ -266,13 +322,13 @@ setMethod('PlotMultipleSilhouette',
             else if(sum(subset %in% names(metrics_obj@Silhouette)) == length(subset)){
               merged_data <- do.call(rbind, metrics_obj@Silhouette[subset])
               merged_data$method <- rep(names(metrics_obj@Silhouette[subset]), 
-                                        each = length(unique(merged_data$labels)))
-              
-            }
+                                        each = length(unique(merged_data$labels)))}
+            
             else{stop('Some or all the names you entered for the subset param do not exist. 
                       Please make sure you are entering a vector of strings 
                       corresponding to the names of the reductions.')}
-            
+
+            merged_data$method <- factor(merged_data$method, levels = metrics_obj@Algorithm)
             if(plot_type == 'boxplot'){
               plot <- plot_boxplot_categorical(merged_data$silhouette_score,
                                                merged_data$method,
@@ -282,13 +338,18 @@ setMethod('PlotMultipleSilhouette',
             }
             
             if(plot_type == 'violin'){
-              plot <- plot_violin(merged_data$silhouette_score, 
-                                  merged_data$method, 
-                                  names = c('silhouette score', 'method'), 
-                                  overlay_type = 'boxplot') + 
-                theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
+              plot <- ggplot(merged_data, aes(x=method, y=silhouette_score, fill=method))+
+                geom_violin()+
+                labs(x = 'Method', y = 'Silhouette', fill='Method')+
+                ggtitle(title)+
+                theme_minimal() +
+                theme(panel.border=element_rect(colour = "grey80", fill=NA, size=0.8),
+                      axis.line = element_line(colour = "grey75", linewidth = 1.1),
+                      panel.grid.major = element_line(color = "grey96"),
+                      aspect.ratio = 1/aspect_ratio,
+                      axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
                       legend.position = 'None')
-            }
+              plot <- plot + geom_boxplot(width=0.1, alpha=0.5, outlier.shape =NA)}
             return(plot)
           })
 
