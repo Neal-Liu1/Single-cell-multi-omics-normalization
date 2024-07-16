@@ -1885,8 +1885,14 @@ ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
 ```{r}
 
 setGeneric('ComputeARIs',
-           function(obj, labels, hclust_method = 'complete', distance_type  = 'euclidean'){standardGeneric('ComputeARIs')})
+           function(
+    obj, labels, hclust_method = 'complete', 
+    distance_type  = 'euclidean', 
+    sample_fraction = 0.1, 
+    num_cross_validation = 10)
+             {standardGeneric('ComputeARIs')})
 
+"
 setMethod('ComputeARIs', 
           signature = c(obj = 'BenchmarkMetrics', labels = 'character'),
           function(obj, labels, hclust_method, distance_type){
@@ -1908,6 +1914,46 @@ setMethod('ComputeARIs',
             return(obj)
             
           })
+"
+
+setMethod('ComputeARIs', 
+          signature = c(obj = 'BenchmarkMetrics', 
+                        labels = 'character'),
+          function(
+    obj, labels, hclust_method, distance_type, 
+    sample_fraction, 
+    num_cross_validation){
+            label_name <- labels
+            labels <- obj@Metadata[[labels]]
+            
+            ARIs <- vector("list", length = length(obj@PCs))
+            names(ARIs) <- names(obj@PCs)
+            
+            for (pc_name in names(obj@PCs)) {
+              pc <- obj@PCs[[pc_name]]
+              ari_values <- numeric(num_cross_validation)
+              
+              for (i in 1:num_cross_validation) {
+                sample_indices <- sample(seq_len(nrow(pc)), 
+                                         size = ceiling(sample_fraction * nrow(pc)))
+                sampled_pc <- pc[sample_indices, , drop = FALSE]
+                sampled_labels <- labels[sample_indices]
+                
+                clusters <- cutree(hclust(d = dist(sampled_pc, method = distance_type), 
+                                          method = hclust_method),
+                                   k = length(unique(sampled_labels)))
+                
+                ari_values[i] <- mclust::adjustedRandIndex(clusters, sampled_labels)
+              }
+              
+              ARIs[[pc_name]] <- mean(ari_values)
+            }
+            
+            obj@ARI[[label_name]] <- ARIs
+            return(obj)
+          })
+
+
 
 
 setGeneric('PlotARIs',
@@ -2001,6 +2047,8 @@ setMethod(
     obj@RunningTime[['ADTnorm']] <- Sys.time() - start
     obj@Adj_data[['ADTnorm']] <- obj@Adj_data[['ADTnorm']] %>% t()
     
+    # NEED TO ADD TOTALVI & RUVIII
+    
     message('Starting PCA for the adjusted data')
     obj@PCs[['DSB']] <- run_PCA(obj@Adj_data[['DSB']], pcs = num_pcs)$u
     obj@PCs[['CLR']] <- run_PCA(obj@Adj_data[['CLR']], pcs = num_pcs)$u
@@ -2018,7 +2066,7 @@ setMethod(
 
 params <- list()
 
-sample <- sample(nrow(merged_adt_metrics@PCs$Raw_counts), 3000)
+sample <- sample(nrow(merged_adt_metrics@PCs$Raw_counts), 20000)
 test <- new('BenchmarkMetrics', 
             Algorithm = merged_adt_metrics@Algorithm,
             Metadata = merged_data@meta.data[sample,],
@@ -2030,10 +2078,12 @@ test <- NormalizeADT(test, params = params, batch_variable = 'study')
 
 ```{r}
 
-test <- ComputeARIs(test, 'celltype.l2_with_transfer')
-test <- ComputeARIs(test, 'study')
-p1 <- PlotARIs(test, 'celltype.l2_with_transfer', title = 'Celltype ARI')
-p2 <- PlotARIs(test, 'study', title = 'Study ARI')
+test <- ComputeARIs(test, 'celltype.l2_with_transfer', sample_fraction = 0.05, num_cross_validation = 40)
+test <- ComputeARIs(test, 'study', sample_fraction = 0.05, num_cross_validation = 40)
+p1 <- PlotARIs(test, 'celltype.l2_with_transfer', title = 'Celltype ARI')+
+  coord_cartesian(ylim = c(0, 0.6))
+p2 <- PlotARIs(test, 'study', title = 'Study ARI') +
+  coord_cartesian(ylim = c(-0.05, 0.05))
 
 gridExtra::grid.arrange(p1,p2, ncol=2)
 
@@ -2062,6 +2112,32 @@ PlotMultipleCorrelations(test, c('study', 'celltype.l2_with_transfer', 'log2_adt
 ```{r}
 
 PlotHVG_Conservation(test, batch_variable = 'study')
+
+```
+
+```{r}
+
+PlotRuntime <- function(obj, title = 'Runtime'){
+  df <- data.frame(time = unlist(obj@RunningTime),
+                   method = names(obj@RunningTime))
+  df$method <- factor(df$method, levels = obj@Algorithm)
+  return(
+    ggplot(df, aes(x=method, y= time, fill = time)) +
+      geom_bar(stat = "identity", colour = 'black') +
+      theme_minimal() +
+      labs(title = title, x = NULL, y = "Runtime (seconds)")+
+      theme(legend.position = 'none',
+            panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
+            aspect.ratio = 1/1.1,
+            axis.line = element_line(colour = "grey45", linewidth = 0.8),
+            panel.grid.major = element_line(color = "grey96"),
+            axis.text.x = element_text(size = 10,angle = 45,hjust = 1)))
+}
+
+```
+
+```{r}
+PlotRuntime(test)
 
 ```
 
