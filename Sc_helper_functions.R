@@ -13,6 +13,7 @@ setMethod('PlotHVG_Conservation',
           signature = c(obj = 'BenchmarkMetrics'),
           function(obj, batch_variable, flavour, title)
           {
+            # Split raw data by batch, then find common HVGs across all batches
             batch_vector <- obj@Metadata[[batch_variable]]
             unique_batches <- unique(batch_vector)
             batch_data_list <- lapply(unique_batches, function(batch){
@@ -20,18 +21,22 @@ setMethod('PlotHVG_Conservation',
             
             batch_hvgs <- lapply(batch_data_list, function(x)
             {Seurat::FindVariableFeatures(
-              obj@Raw_data,
+              x,
               selection.method = flavour)[['variable']]
             }) %>% as.data.frame()
             
             common_hvgs <- rowSums(batch_hvgs) == length(unique_batches)
             
+            # Find HVGs for each adjusted dataset
             normalized_hvgs <- lapply(obj@Adj_data, function(x)
             {Seurat::FindVariableFeatures(x, selection.method = flavour)[['variable']]
             })
             
+            # Use bitwise AND to find conserved HVGs between adjusted and raw data
             hvg_conserv_scores <- lapply(normalized_hvgs, function(x)
             {mean(x & common_hvgs)}) 
+            
+            # Plot
             df <- data.frame(method = names(hvg_conserv_scores),
                              values = unlist(hvg_conserv_scores))
             df$method <- factor(df$method, levels = obj@Algorithm)
@@ -46,7 +51,8 @@ setMethod('PlotHVG_Conservation',
                       aspect.ratio = 1/1.1,
                       axis.line = element_line(colour = "grey45", linewidth = 0.8),
                       panel.grid.major = element_line(color = "grey96"),
-                      axis.text.x = element_text(size = 10,angle = 45,hjust = 1)))
+                      axis.text.x = element_text(size = 10,angle = 45,hjust = 1))+
+                coord_cartesian(ylim = c(0,1)))
             
           })
 
@@ -575,5 +581,23 @@ setMethod('PlotMultipleCorrelations',
             )
           }
 )
+
+# Plot runtimes stored in the metrics object
+PlotRuntime <- function(obj, title = 'Runtime'){
+  df <- data.frame(time = unlist(obj@RunningTime),
+                   method = names(obj@RunningTime))
+  df$method <- factor(df$method, levels = obj@Algorithm)
+  return(
+    ggplot(df, aes(x=method, y= time, fill = time)) +
+      geom_bar(stat = "identity", colour = 'black') +
+      theme_minimal() +
+      labs(title = title, x = NULL, y = "Runtime (seconds)")+
+      theme(legend.position = 'none',
+            panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
+            aspect.ratio = 1/1.1,
+            axis.line = element_line(colour = "grey45", linewidth = 0.8),
+            panel.grid.major = element_line(color = "grey96"),
+            axis.text.x = element_text(size = 10,angle = 45,hjust = 1)))
+}
 
 
