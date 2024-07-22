@@ -2116,27 +2116,6 @@ PlotHVG_Conservation(test, batch_variable = 'study')
 ```
 
 ```{r}
-
-PlotRuntime <- function(obj, title = 'Runtime'){
-  df <- data.frame(time = unlist(obj@RunningTime),
-                   method = names(obj@RunningTime))
-  df$method <- factor(df$method, levels = obj@Algorithm)
-  return(
-    ggplot(df, aes(x=method, y= time, fill = time)) +
-      geom_bar(stat = "identity", colour = 'black') +
-      theme_minimal() +
-      labs(title = title, x = NULL, y = "Runtime (seconds)")+
-      theme(legend.position = 'none',
-            panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
-            aspect.ratio = 1/1.1,
-            axis.line = element_line(colour = "grey45", linewidth = 0.8),
-            panel.grid.major = element_line(color = "grey96"),
-            axis.text.x = element_text(size = 10,angle = 45,hjust = 1)))
-}
-
-```
-
-```{r}
 PlotRuntime(test)
 
 ```
@@ -2158,12 +2137,155 @@ zellkonverter::writeH5AD(test1, file = '/vast/scratch/users/liu.ne/merged_RNA.h5
 ```
 
 
+# Normalize RNA
 ```{r}
 
+setGeneric(
+  'NormalizeRNA',
+  function(obj, params, batch_variable = 'batch', num_pcs = 30)
+    {standardGeneric('NormalizeRNA')
+    }
+  )
 
+setMethod(
+  'NormalizeRNA',
+  signature = c(obj = 'BenchmarkMetrics',
+                params = 'list'),
+  function(obj, params, batch_variable, num_pcs)
+    {
+    if(is.null(obj@Raw_data))
+    {stop('Your metrics object does not have any raw data')}
+    if(is.null(obj@Metadata))
+    {stop('Your metrics object does not have any metadata')}
+    if(!batch_variable %in% colnames(obj@Metadata))
+    {stop("The batch variable name you entered doesn't exist in the metadata")}
+    
+    # Seurat log, totalVI, Seurat rPCA, Seurat CCA, SCT, RUVIII
+    
+    message('Computing PCA for raw data')
+    obj@PCs[['Raw_data']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
+    message('Computing HVGs')
+    HVGs <- Seurat::FindVariableFeatures(obj@Raw_data, 
+                                         selection.method = 'vst',
+                                         nfeatures = 2000)[['variable']]
+    
+    message('Starting Seurat LogNormalize')
+    start <- Sys.time()
+    obj@Adj_data[['Seurat_LogNormalize']] <- Seurat::NormalizeData(obj@Raw_data)
+    obj@RunningTime[['Seurat_LogNormalize']] <- Sys.time() - start
+    
+    message('Starting Seurat SCTransform')
+    start <- Sys.time()
+    obj@Adj_data[['SCTransform']] <- Seurat::SCTransform(obj@Raw_data, 
+                                                         cell.attr = obj@Metadata,
+                                                         return.only.var.genes = F)$y
+    obj@RunningTime[['SCTransform']] <- Sys.time() - start
+    
+    message('Starting fastMNN')
+    start <- Sys.time()
+    obj@PCs[['fastMNN']] <- batchelor::fastMNN(obj@Raw_data,
+                                 batch = obj@Metadata[[batch_variable]],
+                                 subset.row = HVGs,
+                                 d = num_pcs)@int_colData$reducedDims$corrected
+    obj@RunningTime[['fastMNN']] <- Sys.time() - start
+    
+    message('FastMNN finished. Starting Harmony')
+    start <- Sys.time()
+    obj@PCs[['Harmony']] <- harmony::RunHarmony(
+      data_mat = obj@PCs[['Raw_data']],
+      meta_data = obj@Metadata[[batch_variable]])
+    obj@RunningTime[['Harmony']] <- Sys.time() - start
+    
+    message('Starting Seurat rPCA')
+    
+    
+    "
+    bm_list <- Seurat::SplitObject(obj, split.by = )
+    bm_list <- lapply(X = bm_list, FUN = function(x) {
+    x <- Seurat::NormalizeData(x)
+    x <- Seurat::FindVariableFeatures(
+      x, 
+      selection.method = 'vst', 
+      nfeatures = 2000)
+    })
+
+    features <- Seurat::SelectIntegrationFeatures(object.list = bm_list)
+
+    bm_list <- lapply(X = bm_list, FUN = function(x) {
+    x <- Seurat::ScaleData(x, features = features, verbose = FALSE)
+    x <- Seurat::RunPCA(x, features = features, verbose = FALSE)
+    })
+
+    bm_anchors_rpca <- Seurat::FindIntegrationAnchors(
+    object.list = bm_list, 
+    anchor.features = features, 
+    reduction = 'rpca'
+    )"
+    
+    message('Starting PCA for the adjusted data')
+    obj@PCs[['Seurat_LogNormalize']] <- run_PCA(obj@Adj_data[['Seurat_LogNormalize']], pcs = num_pcs)$u
+    obj@PCs[['SCTransform']] <- run_PCA(obj@Adj_data[['SCTransform']], pcs = num_pcs)$u
+    
+    return(obj)
+    
+})
 
 ```
 
+```{r}
+sample2 <- sample(43000, 8000)
+test2 <- new('BenchmarkMetrics',
+             Raw_data = as.matrix(merged_counts[1:3000, sample2]),
+             Metadata = merged_data@meta.data[sample2,])
+test2@Algorithm <- c('Raw_data', 'Seurat_LogNormalize', 'SCTransform', 
+                     'Seurat_rPCA', 'Seurat_CCA', 'Harmony', 
+                     'fastMNN', 'totalVI', 'RUVIII')
+
+rownames(test2@Raw_data) <- rownames(merged_data@assays$RNA)[1:3000]
+colnames(test2@Raw_data) <- colnames(merged_data@assays$RNA)[sample2]
+
+```
+
+```{r}
+
+# params = list(SCT_cell.attr = test2@Metadata$celltype.l2_with_transfer)
+
+test2 <- NormalizeRNA(test2, 
+                      batch_variable = 'study', 
+                      params = params, 
+                      num_pcs = 30)
+
+```
+
+```{r}
+test2 <- ComputeMultipleLISI(test2, variables = c('study', 'celltype.l2_with_transfer'))
+```
+
+```{r}
+
+p1 <- PlotMultipleLISI(test2, 'study', aspect_ratio = 1.1, title = 'Study LISI', levels = test2@Algorithm)
+p2 <- PlotMultipleLISI(test2, 'celltype.l2_with_transfer', aspect_ratio = 1.1, 
+                 title = 'Celltype LISI', levels = test2@Algorithm)
+gridExtra::grid.arrange(p1,p2, ncol =2)
+
+```
+```{r, fig.width= 9, fig.height= 4}
+PlotMultipleCorrelations(
+  test2, 
+  variables = c('study', 'celltype.l2_with_transfer', 'log2_libsize'),
+  titles = c('Study', 'Celltypes', 'Libsize'))
+
+```
+
+```{r}
+PlotHVG_Conservation(test2, batch_variable = 'study', flavour = 'vst')
+
+```
+
+```{r}
+PlotRuntime(test2)
+
+```
 
 ```{r}
 # Backup data
