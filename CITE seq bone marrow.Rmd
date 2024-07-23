@@ -67,6 +67,7 @@ library(SeuratWrappers)
 #devtools::install_github("immunogenomics/lisi")
 library(lisi)
 library(ggpubr)
+library(fastcluster)
 
 ```
 
@@ -1881,108 +1882,6 @@ ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
 ```
 
 
-# ARI function
-```{r}
-
-setGeneric('ComputeARIs',
-           function(
-    obj, labels, hclust_method = 'complete', 
-    distance_type  = 'euclidean', 
-    sample_fraction = 0.1, 
-    num_cross_validation = 10)
-             {standardGeneric('ComputeARIs')})
-
-"
-setMethod('ComputeARIs', 
-          signature = c(obj = 'BenchmarkMetrics', labels = 'character'),
-          function(obj, labels, hclust_method, distance_type){
-            label_name <- labels
-            labels <- obj@Metadata[[labels]]
-            
-            clusters <- lapply(obj@PCs, function(x){
-              cutree(hclust(d= dist(x, method = distance_type), 
-                             method = hclust_method),
-                      k= length(unique(labels)))
-              })
-            
-            ARIs <- lapply(1:length(clusters), function(x){
-              mclust::adjustedRandIndex(clusters[[x]], labels)
-            })
-            
-            names(ARIs) <- names(obj@PCs)
-            obj@ARI[[label_name]] <- ARIs
-            return(obj)
-            
-          })
-"
-
-setMethod('ComputeARIs', 
-          signature = c(obj = 'BenchmarkMetrics', 
-                        labels = 'character'),
-          function(
-    obj, labels, hclust_method, distance_type, 
-    sample_fraction, 
-    num_cross_validation){
-            label_name <- labels
-            labels <- obj@Metadata[[labels]]
-            
-            ARIs <- vector("list", length = length(obj@PCs))
-            names(ARIs) <- names(obj@PCs)
-            
-            for (pc_name in names(obj@PCs)) {
-              pc <- obj@PCs[[pc_name]]
-              ari_values <- numeric(num_cross_validation)
-              
-              for (i in 1:num_cross_validation) {
-                sample_indices <- sample(seq_len(nrow(pc)), 
-                                         size = ceiling(sample_fraction * nrow(pc)))
-                sampled_pc <- pc[sample_indices, , drop = FALSE]
-                sampled_labels <- labels[sample_indices]
-                
-                clusters <- cutree(hclust(d = dist(sampled_pc, method = distance_type), 
-                                          method = hclust_method),
-                                   k = length(unique(sampled_labels)))
-                
-                ari_values[i] <- mclust::adjustedRandIndex(clusters, sampled_labels)
-              }
-              
-              ARIs[[pc_name]] <- mean(ari_values)
-            }
-            
-            obj@ARI[[label_name]] <- ARIs
-            return(obj)
-          })
-
-
-
-
-setGeneric('PlotARIs',
-           function(obj, variable, title = "ARIs of different methods")
-             {standardGeneric('PlotARIs')})
-
-setMethod('PlotARIs',
-          signature= 'BenchmarkMetrics',
-          function(obj, variable, title){
-            merged_ARIs_df <- data.frame(names = names(obj@ARI[[variable]]), ARI = unlist(obj@ARI[[variable]]))
-            merged_ARIs_df$names <- factor(merged_ARIs_df$names, levels = obj@Algorithm)
-            ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
-             geom_bar(stat = "identity", colour = 'black') +
-             theme_minimal() +
-             labs(title = title,
-                  x = NULL,
-                  y = "ARI scores")+
-             theme(legend.position = 'none',
-                    panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
-                    aspect.ratio = 1/1.1,
-                    axis.line = element_line(colour = "grey45", linewidth = 0.8),
-                    panel.grid.major = element_line(color = "grey96"),
-                    axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
-          })
-
-
-```
-
-
 ```{r, fig.width= 9, fig.height= 4}
 
 PlotMultipleCorrelations(merged_adt_metrics, 
@@ -2078,8 +1977,8 @@ test <- NormalizeADT(test, params = params, batch_variable = 'study')
 
 ```{r}
 
-test <- ComputeARIs(test, 'celltype.l2_with_transfer', sample_fraction = 0.05, num_cross_validation = 40)
-test <- ComputeARIs(test, 'study', sample_fraction = 0.05, num_cross_validation = 40)
+test <- ComputeARIs(test, 'celltype.l2_with_transfer', sample_fraction =  1, num_cross_validation =  1)
+test <- ComputeARIs(test, 'study', sample_fraction =  1, num_cross_validation =  1)
 p1 <- PlotARIs(test, 'celltype.l2_with_transfer', title = 'Celltype ARI')+
   coord_cartesian(ylim = c(0, 0.6))
 p2 <- PlotARIs(test, 'study', title = 'Study ARI') +
@@ -2103,7 +2002,7 @@ gridExtra::grid.arrange(p1,p2, ncol =2)
 
 ```
 
-```{r}
+```{r, fig.width= 9, fig.height= 4}
 
 PlotMultipleCorrelations(test, c('study', 'celltype.l2_with_transfer', 'log2_adt_libsize'))
 
@@ -2160,8 +2059,6 @@ setMethod(
     if(!batch_variable %in% colnames(obj@Metadata))
     {stop("The batch variable name you entered doesn't exist in the metadata")}
     
-    # Seurat log, totalVI, Seurat rPCA, Seurat CCA, SCT, RUVIII
-    
     message('Computing PCA for raw data')
     obj@PCs[['Raw_data']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
     message('Computing HVGs')
@@ -2172,76 +2069,87 @@ setMethod(
     message('Starting Seurat LogNormalize')
     start <- Sys.time()
     obj@Adj_data[['Seurat_LogNormalize']] <- Seurat::NormalizeData(obj@Raw_data)
-    obj@RunningTime[['Seurat_LogNormalize']] <- Sys.time() - start
+    obj@RunningTime[['Seurat_LogNormalize']] <- difftime(Sys.time(), start, units = 'secs')
     
     message('Starting Seurat SCTransform')
     start <- Sys.time()
-    obj@Adj_data[['SCTransform']] <- Seurat::SCTransform(obj@Raw_data, 
-                                                         cell.attr = obj@Metadata,
-                                                         return.only.var.genes = F)$y
-    obj@RunningTime[['SCTransform']] <- Sys.time() - start
+    obj@Adj_data[['SCTransform']] <- Seurat::SCTransform(
+      obj@Raw_data,
+      cell.attr = obj@Metadata,
+      return.only.var.genes = F)$y
+    obj@RunningTime[['SCTransform']] <- difftime(Sys.time(), start, units = 'secs')
     
     message('Starting fastMNN')
     start <- Sys.time()
-    obj@PCs[['fastMNN']] <- batchelor::fastMNN(obj@Raw_data,
-                                 batch = obj@Metadata[[batch_variable]],
-                                 subset.row = HVGs,
-                                 d = num_pcs)@int_colData$reducedDims$corrected
-    obj@RunningTime[['fastMNN']] <- Sys.time() - start
+    obj@PCs[['fastMNN']] <- batchelor::fastMNN(
+      obj@Raw_data,
+      batch = obj@Metadata[[batch_variable]],
+      subset.row = HVGs,
+      d = num_pcs)@int_colData$reducedDims$corrected
+    obj@RunningTime[['fastMNN']] <- difftime(Sys.time(), start, units = 'secs')
     
     message('FastMNN finished. Starting Harmony')
     start <- Sys.time()
     obj@PCs[['Harmony']] <- harmony::RunHarmony(
       data_mat = obj@PCs[['Raw_data']],
       meta_data = obj@Metadata[[batch_variable]])
-    obj@RunningTime[['Harmony']] <- Sys.time() - start
-    
-    message('Starting Seurat rPCA')
+    obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'secs')
     
     
-    "
-    bm_list <- Seurat::SplitObject(obj, split.by = )
-    bm_list <- lapply(X = bm_list, FUN = function(x) {
+    
+    # totalVI, RUVIII
+
+    
+    message('Starting Seurat CCA')
+    
+    seurat_object <- Seurat::CreateSeuratObject(
+      counts = obj@Raw_data, 
+      meta.data = obj@Metadata,
+      assay = 'RNA')
+    seurat_object@assays$RNA@layers$counts@Dimnames[[1]] <- rownames(obj@Raw_data)
+    
+    seurat_list <- Seurat::SplitObject(
+      seurat_object, split.by = batch_variable)
+    seurat_list <- lapply(X = seurat_list, function(x) {
     x <- Seurat::NormalizeData(x)
     x <- Seurat::FindVariableFeatures(
       x, 
       selection.method = 'vst', 
       nfeatures = 2000)
-    })
+    }) 
+    features <- Seurat::SelectIntegrationFeatures(seurat_list)
+    start <- Sys.time()
+    cca_anchors <- Seurat::FindIntegrationAnchors(
+      object.list = seurat_list,
+      anchor.features = features,
+      reduction = 'cca')
+    
+    Integrated_cca <- Seurat::IntegrateData(anchorset = cca_anchors)
 
-    features <- Seurat::SelectIntegrationFeatures(object.list = bm_list)
-
-    bm_list <- lapply(X = bm_list, FUN = function(x) {
-    x <- Seurat::ScaleData(x, features = features, verbose = FALSE)
-    x <- Seurat::RunPCA(x, features = features, verbose = FALSE)
-    })
-
-    bm_anchors_rpca <- Seurat::FindIntegrationAnchors(
-    object.list = bm_list, 
-    anchor.features = features, 
-    reduction = 'rpca'
-    )"
+    obj@Adj_data[['Seurat_CCA']] <- Integrated_cca@assays$integrated@data %>% as.matrix()
+    obj@RunningTime[['Seurat_CCA']] <- difftime(Sys.time(), start, units = 'secs')
     
     message('Starting PCA for the adjusted data')
     obj@PCs[['Seurat_LogNormalize']] <- run_PCA(obj@Adj_data[['Seurat_LogNormalize']], pcs = num_pcs)$u
     obj@PCs[['SCTransform']] <- run_PCA(obj@Adj_data[['SCTransform']], pcs = num_pcs)$u
+    obj@PCs[['Seurat_CCA']] <- run_PCA(obj@Adj_data[['Seurat_CCA']], pcs = num_pcs)$u
     
     return(obj)
-    
+
 })
 
 ```
 
 ```{r}
-sample2 <- sample(43000, 8000)
+sample2 <- sample(43000, 12000)
 test2 <- new('BenchmarkMetrics',
-             Raw_data = as.matrix(merged_counts[1:3000, sample2]),
+             Raw_data = as.matrix(merged_counts[1:4000, sample2]),
              Metadata = merged_data@meta.data[sample2,])
 test2@Algorithm <- c('Raw_data', 'Seurat_LogNormalize', 'SCTransform', 
-                     'Seurat_rPCA', 'Seurat_CCA', 'Harmony', 
+                     'Seurat_CCA', 'Harmony', 
                      'fastMNN', 'totalVI', 'RUVIII')
 
-rownames(test2@Raw_data) <- rownames(merged_data@assays$RNA)[1:3000]
+rownames(test2@Raw_data) <- rownames(merged_data@assays$RNA)[1:4000]
 colnames(test2@Raw_data) <- colnames(merged_data@assays$RNA)[sample2]
 
 ```
@@ -2250,10 +2158,11 @@ colnames(test2@Raw_data) <- colnames(merged_data@assays$RNA)[sample2]
 
 # params = list(SCT_cell.attr = test2@Metadata$celltype.l2_with_transfer)
 
-test2 <- NormalizeRNA(test2, 
-                      batch_variable = 'study', 
-                      params = params, 
-                      num_pcs = 30)
+test2 <- NormalizeRNA(
+  test2,
+  batch_variable = 'study',
+  params = params,
+  num_pcs = 30)
 
 ```
 
@@ -2269,6 +2178,16 @@ p2 <- PlotMultipleLISI(test2, 'celltype.l2_with_transfer', aspect_ratio = 1.1,
 gridExtra::grid.arrange(p1,p2, ncol =2)
 
 ```
+```{r}
+test2 <- ComputeARIs(test2, 'celltype.l2_with_transfer', sample_fraction = 1, num_cross_validation = 1)
+test2 <- ComputeARIs(test2, 'study', sample_fraction = 1, num_cross_validation = 1)
+p1 <- PlotARIs(test2, 'celltype.l2_with_transfer', title = 'Celltype ARIs')
+p2 <- PlotARIs(test2, 'study', title = 'Study ARIs')
+gridExtra::grid.arrange(p1,p2, ncol=2)
+
+```
+
+
 ```{r, fig.width= 9, fig.height= 4}
 PlotMultipleCorrelations(
   test2, 
@@ -2278,7 +2197,7 @@ PlotMultipleCorrelations(
 ```
 
 ```{r}
-PlotHVG_Conservation(test2, batch_variable = 'study', flavour = 'vst')
+PlotHVG_Conservation(test2, batch_variable = 'study')
 
 ```
 
