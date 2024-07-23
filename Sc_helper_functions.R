@@ -1,4 +1,71 @@
 
+# Compute ARIs
+setGeneric('ComputeARIs',
+           function(
+    obj, labels, hclust_method = 'complete', 
+    distance_type  = 'euclidean', 
+    sample_fraction = 0.3, 
+    num_cross_validation = 5)
+           {standardGeneric('ComputeARIs')})
+
+setMethod('ComputeARIs', 
+          signature = c(obj = 'BenchmarkMetrics', 
+                        labels = 'character'),
+          function(
+    obj, labels, hclust_method, distance_type, 
+    sample_fraction, 
+    num_cross_validation){
+            label_name <- labels
+            labels <- obj@Metadata[[labels]]
+            ARIs <- vector("list", length = length(obj@PCs))
+            names(ARIs) <- names(obj@PCs)
+            for (pc_name in names(obj@PCs)) {
+              pc <- obj@PCs[[pc_name]]
+              ari_values <- numeric(num_cross_validation)
+              for (i in 1:num_cross_validation) {
+                sample_indices <- sample(seq_len(nrow(pc)), 
+                                         size = ceiling(sample_fraction * nrow(pc)))
+                sampled_pc <- pc[sample_indices, , drop = FALSE]
+                sampled_labels <- labels[sample_indices]
+                
+                clusters <- cutree(fastcluster::hclust(d = dist(sampled_pc, method = distance_type), 
+                                                       method = hclust_method),
+                                   k = length(unique(sampled_labels)))
+                
+                ari_values[i] <- mclust::adjustedRandIndex(clusters, sampled_labels)}
+              ARIs[[pc_name]] <- mean(ari_values)
+            }
+            obj@ARI[[label_name]] <- ARIs
+            return(obj)
+          })
+
+
+# plot ARIs
+setGeneric('PlotARIs',
+           function(obj, variable, title = "ARIs of different methods")
+           {standardGeneric('PlotARIs')})
+
+setMethod('PlotARIs',
+          signature= 'BenchmarkMetrics',
+          function(obj, variable, title){
+            merged_ARIs_df <- data.frame(names = names(obj@ARI[[variable]]), ARI = unlist(obj@ARI[[variable]]))
+            merged_ARIs_df$names <- factor(merged_ARIs_df$names, levels = obj@Algorithm)
+            ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
+              geom_bar(stat = "identity", colour = 'black') +
+              theme_minimal() +
+              labs(title = title,
+                   x = NULL,
+                   y = "ARI scores")+
+              theme(legend.position = 'none',
+                    panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
+                    aspect.ratio = 1/1.1,
+                    axis.line = element_line(colour = "grey45", linewidth = 0.8),
+                    panel.grid.major = element_line(color = "grey96"),
+                    axis.text.x = element_text(size = 10,angle = 45,hjust = 1))
+          })
+
+
+
 # HVG conservation
 setGeneric('PlotHVG_Conservation', 
            function(obj, batch_variable = 'batch', flavour = 'vst', title = 'HVG conservation plot')
