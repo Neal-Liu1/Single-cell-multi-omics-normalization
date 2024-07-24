@@ -384,63 +384,58 @@ setMethod('ComputeMultipleSilhouette',
           })
 
 
-setGeneric('PlotMultipleSilhouette',
-           function(metrics_obj, 
-                    subset = 'all', 
-                    plot_type = 'violin',
-                    title = NULL,
-                    aspect_ratio = 1.2){
-             standardGeneric('PlotMultipleSilhouette')
-           }
-)
+setGeneric(
+  'PlotMultipleSilhouette',
+  function(obj, ...){
+    standardGeneric('PlotMultipleSilhouette')})
 
-setMethod('PlotMultipleSilhouette', 
-          signature = c(metrics_obj = 'BenchmarkMetrics'),
-          function(metrics_obj, 
-                   subset, 
-                   plot_type,
-                   title,
-                   aspect_ratio){
-            
-            if(all(subset == 'all')){
-              merged_data <- do.call(rbind, metrics_obj@Silhouette)
-              merged_data$method <- rep(names(metrics_obj@Silhouette), 
-                                        each = length(unique(merged_data$labels)))
-            }
-            else if(sum(subset %in% names(metrics_obj@Silhouette)) == length(subset)){
-              merged_data <- do.call(rbind, metrics_obj@Silhouette[subset])
-              merged_data$method <- rep(names(metrics_obj@Silhouette[subset]), 
-                                        each = length(unique(merged_data$labels)))}
-            
-            else{stop('Some or all the names you entered for the subset param do not exist. 
-                      Please make sure you are entering a vector of strings 
-                      corresponding to the names of the reductions.')}
-
-            merged_data$method <- factor(merged_data$method, levels = metrics_obj@Algorithm)
-            if(plot_type == 'boxplot'){
-              plot <- plot_boxplot_categorical(merged_data$silhouette_score,
-                                               merged_data$method,
-                                               names = c('silhouette score', 'method')) + 
-                theme(axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
-                      legend.position = 'none')
-            }
-            
-            if(plot_type == 'violin'){
-              plot <- ggplot(merged_data, aes(x=method, y=silhouette_score, fill=method))+
-                geom_violin()+
-                labs(x = 'Method', y = 'Silhouette', fill='Method')+
-                ggtitle(title)+
-                theme_minimal() +
-                theme(panel.border=element_rect(colour = "grey80", fill=NA, size=0.8),
-                      axis.line = element_line(colour = "grey75", linewidth = 1.1),
-                      panel.grid.major = element_line(color = "grey96"),
-                      aspect.ratio = 1/aspect_ratio,
-                      axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
-                      legend.position = 'None')
-              plot <- plot + geom_boxplot(width=0.1, alpha=0.5, outlier.shape =NA)}
-            return(plot)
-          })
-
+setMethod(
+  'PlotMultipleSilhouette',
+  signature = c(obj = 'BenchmarkMetrics'),
+  function(
+    obj,
+    variable,
+    plot_type = 'violin',
+    title = NULL,
+    aspect_ratio = 1.3){
+    if(variable %in% colnames(obj@Metadata)){
+      merged_data <- do.call(rbind, obj@Silhouette[[variable]])
+      merged_data$method <- rep(names(obj@Silhouette[[variable]]),
+                                each = length(unique(merged_data$labels)))}
+    
+    else{stop("Silhouette scores for this variable hasn't been computed yet.")}
+    
+    merged_data$method <- factor(merged_data$method, levels = obj@Algorithm)
+    
+    if(plot_type == 'boxplot'){
+      plot <- ggplot(merged_data, aes(x=method, y=silhouette_score, fill=method))+
+        geom_boxplot(outlier.shape =NA)+
+        labs(y = 'Silhouette', x = NULL)+
+        ggtitle(title)+
+        theme_minimal() +
+        theme(panel.border=element_rect(colour = "grey80", fill=NA, size=0.8),
+              axis.line = element_line(colour = "grey75", linewidth = 1.1),
+              panel.grid.major = element_line(color = "grey96"),
+              aspect.ratio = 1/aspect_ratio,
+              axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
+              legend.position = 'None')}
+    
+    if(plot_type == 'violin'){
+      plot <- ggplot(merged_data, aes(x=method, y=silhouette_score, fill=method))+
+        geom_violin(trim = T)+
+        labs(y = 'Silhouette', x = NULL)+
+        ggtitle(title)+
+        theme_minimal() +
+        theme(panel.border=element_rect(colour = "grey80", fill=NA, size=0.8),
+              axis.line = element_line(colour = "grey75", linewidth = 1.1),
+              panel.grid.major = element_line(color = "grey96"),
+              aspect.ratio = 1/aspect_ratio,
+              axis.text.x = element_text(size = 10,angle = 45,hjust = 1),
+              legend.position = 'None')
+      plot <- plot + geom_boxplot(width=0.1, alpha=0.5, outlier.shape =NA)
+    }
+    return(plot)
+  })
 
 
 
