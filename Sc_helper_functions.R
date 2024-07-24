@@ -85,7 +85,6 @@ setMethod('PlotHVG_Conservation',
             unique_batches <- unique(batch_vector)
             batch_data_list <- lapply(unique_batches, function(batch){
               obj@Raw_data[, batch_vector == batch]})
-            
             batch_hvgs <- lapply(batch_data_list, function(x)
             {Seurat::FindVariableFeatures(
               x,
@@ -302,18 +301,36 @@ setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
 # Plot silhouette for multiple datasets
 
 setGeneric("ComputeMultipleSilhouette", 
-           function(obj,
-                    metrics_obj, 
-                    reductions, 
-                    silhouette_format = 'per_cluster', 
-                    labels) 
+           function(obj, ...) 
              standardGeneric("ComputeMultipleSilhouette"))
 
 setMethod('ComputeMultipleSilhouette', 
-          signature = c(obj = 'Seurat', 
-                        metrics_obj = 'BenchmarkMetrics',
-                        reductions = 'character',
-                        labels = 'character'), 
+          signature = c(obj = 'BenchmarkMetrics'),
+          function(obj, variables, result_format = 'per_cluster'){
+            
+            if(!all(variables %in% colnames(obj@Metadata))){
+              stop('Some or all variable names you entered is not in the metadata.')}
+            
+            PCs <- obj@PCs
+            num_cores <- detectCores() - 2
+            silhouettes <- list()
+            for(variable in variables){
+              silhouettes <- parallel::mclapply(
+                PCs,
+                function(x){
+                  compute_silhouette(
+                    matrix = x,
+                    label_vector = obj@Metadata[[variable]],
+                    result_format = result_format)
+                },
+                mc.cores = num_cores)
+              obj@Silhouette[[variable]] <- silhouettes
+            }
+            return(obj)
+          })
+
+setMethod('ComputeMultipleSilhouette', 
+          signature = c(obj = 'Seurat'), 
           function(obj, 
                    metrics_obj, 
                    reductions, 
@@ -342,9 +359,7 @@ setMethod('ComputeMultipleSilhouette',
 
 
 setMethod('ComputeMultipleSilhouette', 
-          signature = c(obj = 'list', 
-                        metrics_obj = 'BenchmarkMetrics',
-                        labels = 'character'), 
+          signature = c(obj = 'list'), 
           function(obj, 
                    metrics_obj, 
                    reductions, 
