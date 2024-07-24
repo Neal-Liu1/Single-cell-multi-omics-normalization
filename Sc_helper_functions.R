@@ -1,11 +1,45 @@
 
+
+
+setGeneric('ComputeAssessments',
+           function(obj, ...){standardGeneric('ComputeAssessments')})
+
+setMethod(
+  'ComputeAssessments',
+  signature = c(obj = 'BenchmarkMetrics'),
+  function(obj,
+           variables){
+    
+    if(!all(variables %in% colnames(obj@Metadata))){
+      stop('Some/all variables you entered is not in the metadata.')
+    }
+    message('Calculating LISI')
+    start <- Sys.time()
+    obj <- ComputeMultipleLISI(obj, variables = variables)
+    message(paste0('LISI finished in ', 
+                   round(difftime(Sys.time(),start, units = 'secs'), 2),
+                   ' seconds. Starting Silhouette calculation'))
+    start <- Sys.time()
+    obj <- ComputeMultipleSilhouette(obj, variables = variables)
+    message(paste0('Silhouette finished in ', 
+                   round(difftime(Sys.time(),start, units = 'secs'), 2),
+                   ' seconds. Starting ARI calculation'))
+    for(variable in variables){
+      obj <- ComputeARIs(obj, variable)
+    }
+    message(paste0('ARI finished in ',
+                   round(difftime(Sys.time(),start, units = 'secs'), 2),
+                   ' seconds.'))
+    return(obj)
+  })
+
 # Compute ARIs
 setGeneric('ComputeARIs',
            function(
     obj, labels, hclust_method = 'complete', 
     distance_type  = 'euclidean', 
-    sample_fraction = 0.3, 
-    num_cross_validation = 5)
+    sample_fraction = 1, 
+    num_cross_validation = 1)
            {standardGeneric('ComputeARIs')})
 
 setMethod('ComputeARIs', 
@@ -660,15 +694,19 @@ setMethod('PlotMultipleCorrelations',
 )
 
 # Plot runtimes stored in the metrics object
-PlotRuntime <- function(obj, title = 'Runtime'){
-  df <- data.frame(time = unlist(obj@RunningTime),
+PlotRuntime <- function(obj, title = 'Runtime', log = F){
+  if(!log){df <- data.frame(time = unlist(obj@RunningTime),
                    method = names(obj@RunningTime))
+  ylab = 'Runtime (seconds)'}
+  if(log){df <- data.frame(time = log2(unlist(obj@RunningTime)),
+                     method = names(obj@RunningTime))
+  ylab = 'Runtime (log2 seconds)'}
   df$method <- factor(df$method, levels = obj@Algorithm)
   return(
     ggplot(df, aes(x=method, y= time, fill = time)) +
       geom_bar(stat = "identity", colour = 'black') +
       theme_minimal() +
-      labs(title = title, x = NULL, y = "Runtime (seconds)")+
+      labs(title = title, x = NULL, y = ylab)+
       theme(legend.position = 'none',
             panel.border=element_rect(colour = "grey87", fill=NA, size=0.7),
             aspect.ratio = 1/1.1,
