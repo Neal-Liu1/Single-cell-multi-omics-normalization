@@ -1,14 +1,13 @@
 
 #' Compute Assessments
 #'
-#' This function computes various assessments (LISI, Silhouette, ARI) for multiple variables in a BenchmarkMetrics object.
-#' 
-#' @export
+#' This function computes various assessments (LISI, Silhouette, ARI) for multiple 
+#' variables in a BenchmarkMetrics object.
 #'
 setGeneric('ComputeAssessments',
            function(obj, ...){standardGeneric('ComputeAssessments')})
 
-#' @describeIn ComputeAssessments lolololol
+#' @describeIn ComputeAssessments
 #' @param obj A BenchmarkMetrics object.
 #' @param variables A vector of variable names to compute the assessments for.
 #' @param ... Additional parameters for other methods (currently not used)
@@ -55,7 +54,7 @@ setMethod(
 #' 
 #' Computes Adjusted Rand Index for a specific categorical variable, using the 
 #' fastcluster's fast hierarchical clustering implementation.
-#' 
+#' @family ComputeARIs
 #' @param obj a BenchmarkMetrics object.
 #' @param labels a character vector of variables you want to compute ARI for.
 #' @param hclust_method a string indicating the method used for hierarchical clustering. 
@@ -81,7 +80,7 @@ setGeneric('ComputeARIs',
 #' 
 #' Computes Adjusted Rand Index for a specific categorical variable, using the 
 #' fastcluster's fast hierarchical clustering implementation.
-#' 
+#' @family ComputeARIs
 #' @param obj a BenchmarkMetrics object.
 #' @param labels a character vector of variables you want to compute ARI for.
 #' @param hclust_method a string indicating the method used for hierarchical clustering. 
