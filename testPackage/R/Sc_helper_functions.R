@@ -90,9 +90,9 @@ setGeneric('ComputeARIs',
 #' @param ... Additional params for other methods
 #' @param num_cross_validation an integer specifying how fold cross validation to do. Default is 1 (no cross validation).
 #' @return a BenchmarkMetrics object with computed ARIs under the ARI slot. 
-#' @rdname ComputeARIs_BenchmarkMetrics
 #' 
 #' @export
+#' @rdname ComputeARIs_BenchmarkMetrics
 setMethod('ComputeARIs', 
           signature = c(obj = 'BenchmarkMetrics'),
           function(obj,
