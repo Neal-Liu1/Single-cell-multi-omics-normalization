@@ -1,0 +1,9 @@
+Package: testPackage
+Type: Package
+Title: A Package for Computing Various Assessments
+Version: 0.0.0
+Author: Neal Liu <neal.liu18@gmail.com>
+Maintainer: Neal Liu <neal.liu18@gmail.com>
+Description: This package will save humanity from its eventual destruction.
+License: GPL-3
+RoxygenNote: 7.3.1
