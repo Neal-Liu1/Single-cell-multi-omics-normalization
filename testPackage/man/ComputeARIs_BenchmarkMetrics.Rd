@@ -2,7 +2,7 @@
 % Please edit documentation in R/Sc_helper_functions.R
 \name{ComputeARIs,BenchmarkMetrics-method}
 \alias{ComputeARIs,BenchmarkMetrics-method}
-\title{Assessment Functions}
+\title{Compute ARIs for BenchmarkMetrics objects}
 \usage{
 \S4method{ComputeARIs}{BenchmarkMetrics}(
   obj,
@@ -35,9 +35,6 @@ a BenchmarkMetrics object with computed ARIs under the ARI slot.
 \description{
 Computes Adjusted Rand Index for a specific categorical variable, using the 
 fastcluster's fast hierarchical clustering implementation.
-}
-\details{
-Compute ARIs for BenchmarkMetrics objects
 }
 \seealso{
 Other ComputeARIs: 

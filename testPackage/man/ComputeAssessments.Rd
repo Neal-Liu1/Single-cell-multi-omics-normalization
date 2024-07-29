@@ -3,8 +3,7 @@
 \name{ComputeAssessments}
 \alias{ComputeAssessments}
 \alias{ComputeAssessments,BenchmarkMetrics-method}
-\title{Main Functions
-Compute Assessments}
+\title{Compute Assessments}
 \usage{
 ComputeAssessments(obj, ...)
 
@@ -29,12 +28,6 @@ variables in a BenchmarkMetrics object.
 \item \code{ComputeAssessments(BenchmarkMetrics)}: Method for BenchmarkMetrics objects
 
 }}
-\section{Assessment}{
-
-
-
-}
-
 \examples{
 \dontrun{
 # Assuming `bm` is a BenchmarkMetrics object and `vars` is a vector of variable names

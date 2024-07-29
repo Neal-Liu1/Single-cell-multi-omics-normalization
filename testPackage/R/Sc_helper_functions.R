@@ -1,4 +1,115 @@
 
+#' Run all current popular RNA normalizations
+#' @description Runs Seurat logNormalized, Seurat CCA, Seurat SCT, fastMNN and Harmony, 
+#' also computes their PCAs and records runtimes. All stored back into the BenchmarkMetrics object. 
+#' 
+#' @param obj A BenchmarkMetrics object with populated raw_data and metadata
+#' @param batch_variable A string indicating which metadata column corresponds to batch information
+#' @param num_pcs An integer indicating how many PCs to compute for dim reduction
+#' @param ... Additional arguments for other methods (currently not used)
+#' @return A BenchmarkMetrics object with the adjusted data, their PCs and runtimes added to the corresponding slots.
+#' @export
+
+setGeneric(
+  'NormalizeRNA',
+  function(obj, batch_variable = 'batch', num_pcs = 30, ...)
+  {standardGeneric('NormalizeRNA')})
+
+#' @describeIn NormalizeRNA S4 method for class BenchmarkMetrics
+#' @export
+setMethod(
+  'NormalizeRNA',
+  signature = c(obj = 'BenchmarkMetrics'),
+  function(obj, batch_variable, num_pcs, ...)
+  {
+    if(is.null(obj@Raw_data))
+      {stop('Your metrics object does not have any raw data \U0001F92F')}
+    if(is.null(obj@Metadata))
+      {stop('Your metrics object does not have any metadata \U0001F92F')}
+    if(!batch_variable %in% colnames(obj@Metadata))
+      {stop("The batch variable name you entered doesn't exist in the metadata \U0001F92F")}
+    
+    message('Computing PCA for raw data \U0001F92F')
+    obj@PCs[['Raw_data']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
+    message('Computing HVGs \U0001F92F')
+    HVGs <- Seurat::FindVariableFeatures(obj@Raw_data, 
+                                         selection.method = 'vst',
+                                         nfeatures = 2000)[['variable']]
+    
+    message('Starting Seurat LogNormalize \U0001F92F')
+    start <- Sys.time()
+    obj@Adj_data[['Seurat_LogNormalize']] <- Seurat::NormalizeData(obj@Raw_data)
+    obj@RunningTime[['Seurat_LogNormalize']] <- difftime(Sys.time(), start, units = 'secs')
+    
+    message('Starting Seurat SCTransform \U0001F92F')
+    start <- Sys.time()
+    obj@Adj_data[['SCTransform']] <- Seurat::SCTransform(
+      obj@Raw_data,
+      cell.attr = obj@Metadata,
+      return.only.var.genes = F)$y
+    obj@RunningTime[['SCTransform']] <- difftime(Sys.time(), start, units = 'secs')
+    
+    message('Starting fastMNN \U0001F92F')
+    start <- Sys.time()
+    obj@PCs[['fastMNN']] <- batchelor::fastMNN(
+      obj@Raw_data,
+      batch = obj@Metadata[[batch_variable]],
+      subset.row = HVGs,
+      d = num_pcs)@int_colData$reducedDims$corrected
+    obj@RunningTime[['fastMNN']] <- difftime(Sys.time(), start, units = 'secs')
+    
+    message('FastMNN finished. Starting Harmony \U0001F92F')
+    start <- Sys.time()
+    obj@PCs[['Harmony']] <- harmony::RunHarmony(
+      data_mat = obj@PCs[['Raw_data']],
+      meta_data = obj@Metadata[[batch_variable]])
+    obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'secs')
+    
+    
+    
+    # totalVI, RUVIII
+    
+    
+    message('Starting Seurat CCA')
+    
+    seurat_object <- Seurat::CreateSeuratObject(
+      counts = obj@Raw_data, 
+      meta.data = obj@Metadata,
+      assay = 'RNA')
+    seurat_object@assays$RNA@layers$counts@Dimnames[[1]] <- rownames(obj@Raw_data)
+    
+    seurat_list <- Seurat::SplitObject(
+      seurat_object, split.by = batch_variable)
+    seurat_list <- lapply(X = seurat_list, function(x) {
+      x <- Seurat::NormalizeData(x)
+      x <- Seurat::FindVariableFeatures(
+        x, 
+        selection.method = 'vst', 
+        nfeatures = 2000)
+    }) 
+    features <- Seurat::SelectIntegrationFeatures(seurat_list)
+    start <- Sys.time()
+    cca_anchors <- Seurat::FindIntegrationAnchors(
+      object.list = seurat_list,
+      anchor.features = features,
+      reduction = 'cca')
+    
+    Integrated_cca <- Seurat::IntegrateData(anchorset = cca_anchors)
+    
+    obj@Adj_data[['Seurat_CCA']] <- Integrated_cca@assays$integrated@data %>% as.matrix()
+    obj@RunningTime[['Seurat_CCA']] <- difftime(Sys.time(), start, units = 'secs')
+    
+    message('Starting PCA for the adjusted data \U0001F92F')
+    obj@PCs[['Seurat_LogNormalize']] <- run_PCA(obj@Adj_data[['Seurat_LogNormalize']], pcs = num_pcs)$u
+    obj@PCs[['SCTransform']] <- run_PCA(obj@Adj_data[['SCTransform']], pcs = num_pcs)$u
+    obj@PCs[['Seurat_CCA']] <- run_PCA(obj@Adj_data[['Seurat_CCA']], pcs = num_pcs)$u
+    
+    return(obj)
+    
+  })
+
+
+
 #' Compute Assessments
 #' 
 #' @description This function computes various assessments (LISI, Silhouette, ARI) for multiple 
@@ -6,7 +117,7 @@
 #' @name ComputeAssessments
 #' 
 setGeneric('ComputeAssessments',
-           function(obj, ...){standardGeneric('ComputeAssessments')})
+           function(obj, variables, ...){standardGeneric('ComputeAssessments')})
 
 #' @describeIn ComputeAssessments Method for BenchmarkMetrics objects
 #' 
@@ -27,7 +138,8 @@ setMethod(
   'ComputeAssessments',
   signature = c(obj = 'BenchmarkMetrics'),
   function(obj,
-           variables){
+           variables,
+           ...){
     
     if(!all(variables %in% colnames(obj@Metadata))){
       stop('Some/all variables you entered is not in the metadata \U0001F92F')
@@ -132,10 +244,12 @@ setMethod('ComputeARIs',
 
 
 # plot ARIs
+#' @export
 setGeneric('PlotARIs',
            function(obj, variable, title = "ARIs of different methods")
            {standardGeneric('PlotARIs')})
 
+#' @export
 setMethod('PlotARIs',
           signature= 'BenchmarkMetrics',
           function(obj, variable, title){
@@ -394,7 +508,7 @@ setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
 setGeneric("ComputeMultipleSilhouette", 
            function(obj, ...) 
              standardGeneric("ComputeMultipleSilhouette"))
-
+#' @export
 setMethod('ComputeMultipleSilhouette', 
           signature = c(obj = 'BenchmarkMetrics'),
           function(obj, variables, result_format = 'per_cluster'){
@@ -477,18 +591,24 @@ setMethod('ComputeMultipleSilhouette',
 
 setGeneric(
   'PlotMultipleSilhouette',
-  function(obj, ...){
+  function(obj, variable,
+           plot_type = 'violin',
+           title,
+           aspect_ratio,
+           ...){
     standardGeneric('PlotMultipleSilhouette')})
 
+#' @export
 setMethod(
   'PlotMultipleSilhouette',
   signature = c(obj = 'BenchmarkMetrics'),
   function(
     obj,
     variable,
-    plot_type = 'violin',
+    plot_type,
     title = NULL,
-    aspect_ratio = 1.3){
+    aspect_ratio = 1.3,
+    ...){
     if(variable %in% colnames(obj@Metadata)){
       merged_data <- do.call(rbind, obj@Silhouette[[variable]])
       merged_data$method <- rep(names(obj@Silhouette[[variable]]),
@@ -562,6 +682,7 @@ setMethod('ComputeMultipleLISI',
 # and matadata as dataframe in the metadata slot,
 # Compute the LISI scores for every reduction for every variable
 # Returns the metrics obj with LISI scores in the LISI slots.
+#' @export
 setMethod('ComputeMultipleLISI', 
           signature = c(obj = 'BenchmarkMetrics',
                         reductions = NULL,
@@ -593,6 +714,7 @@ setGeneric('PlotMultipleLISI',
                     title = NULL, levels = NULL)
            {standardGeneric('PlotMultipleLISI')})
 
+#' @export
 setMethod('PlotMultipleLISI',
           signature = c(obj = 'BenchmarkMetrics',
                         reductions = NULL,
@@ -704,6 +826,7 @@ setMethod('PlotCorrelations',
 setGeneric('PlotMultipleCorrelations', function(obj, variables, reductions = 'all', num_pcs = 10, titles = NULL)
 {standardGeneric('PlotMultipleCorrelations')})
 
+#' @export
 setMethod('PlotMultipleCorrelations',
           signature = c(obj='BenchmarkMetrics',
                         variables = 'character'),
@@ -750,7 +873,9 @@ setMethod('PlotMultipleCorrelations',
           }
 )
 
+
 # Plot runtimes stored in the metrics object
+#' @export
 PlotRuntime <- function(obj, title = 'Runtime', log = F){
   if(!log){df <- data.frame(time = unlist(obj@RunningTime),
                    method = names(obj@RunningTime))
