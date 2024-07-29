@@ -3,7 +3,8 @@
 \name{ComputeAssessments}
 \alias{ComputeAssessments}
 \alias{ComputeAssessments,BenchmarkMetrics-method}
-\title{Compute Assessments}
+\title{Main Functions
+Compute Assessments}
 \usage{
 ComputeAssessments(obj, ...)
 
@@ -20,13 +21,20 @@ ComputeAssessments(obj, ...)
 A BenchmarkMetrics object with the computed assessments added.
 }
 \description{
-This function computes various assessments (LISI, Silhouette, ARI) for multiple variables in a BenchmarkMetrics object.
+This function computes various assessments (LISI, Silhouette, ARI) for multiple 
+variables in a BenchmarkMetrics object.
 }
 \section{Functions}{
 \itemize{
-\item \code{ComputeAssessments(BenchmarkMetrics)}: lolololol
+\item \code{ComputeAssessments(BenchmarkMetrics)}: Method for BenchmarkMetrics objects
 
 }}
+\section{Assessment}{
+
+
+
+}
+
 \examples{
 \dontrun{
 # Assuming `bm` is a BenchmarkMetrics object and `vars` is a vector of variable names

@@ -1,9 +1,26 @@
 
-
-
+#' Compute Assessments
+#'
+#' This function computes various assessments (LISI, Silhouette, ARI) for multiple variables in a BenchmarkMetrics object.
+#' 
+#' @export
+#'
 setGeneric('ComputeAssessments',
            function(obj, ...){standardGeneric('ComputeAssessments')})
-
+#'
+#' @param obj A BenchmarkMetrics object.
+#' @param variables A vector of variable names to compute the assessments for.
+#' @param ... Additional parameters for other methods (currently not used)
+#' @return A BenchmarkMetrics object with the computed assessments added.
+#' 
+#' @examples
+#' \dontrun{
+#' # Assuming `bm` is a BenchmarkMetrics object and `vars` is a vector of variable names
+#' bm <- ComputeAssessments(bm, vars)
+#' }
+#' 
+#' @export
+#'
 setMethod(
   'ComputeAssessments',
   signature = c(obj = 'BenchmarkMetrics'),

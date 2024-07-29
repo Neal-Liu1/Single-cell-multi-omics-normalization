@@ -1,13 +1,15 @@
 
 #' Compute Assessments
-#'
-#' This function computes various assessments (LISI, Silhouette, ARI) for multiple 
+#' 
+#' @description This function computes various assessments (LISI, Silhouette, ARI) for multiple 
 #' variables in a BenchmarkMetrics object.
-#'
+#' @name ComputeAssessments
+#' 
 setGeneric('ComputeAssessments',
            function(obj, ...){standardGeneric('ComputeAssessments')})
 
-#' @describeIn ComputeAssessments
+#' @describeIn ComputeAssessments Method for BenchmarkMetrics objects
+#' 
 #' @param obj A BenchmarkMetrics object.
 #' @param variables A vector of variable names to compute the assessments for.
 #' @param ... Additional parameters for other methods (currently not used)
@@ -28,32 +30,34 @@ setMethod(
            variables){
     
     if(!all(variables %in% colnames(obj@Metadata))){
-      stop('Some/all variables you entered is not in the metadata.')
+      stop('Some/all variables you entered is not in the metadata \U0001F92F')
     }
-    message('Calculating LISI')
+    message('Calculating LISI \U0001F92F')
     start <- Sys.time()
     obj <- ComputeMultipleLISI(obj, variables = variables)
     message(paste0('LISI finished in ', 
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
-                   ' seconds. Starting Silhouette calculation'))
+                   ' seconds \U0001F92F\nStarting Silhouette calculation \U0001F92F'))
     start <- Sys.time()
     obj <- ComputeMultipleSilhouette(obj, variables = variables)
     message(paste0('Silhouette finished in ', 
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
-                   ' seconds. Starting ARI calculation'))
+                   ' seconds \U0001F92F\nStarting ARI calculation \U0001F92F'))
     for(variable in variables){
       obj <- ComputeARIs(obj, variable)
     }
     message(paste0('ARI finished in ',
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
-                   ' seconds.'))
+                   ' seconds \U0001F92F'))
     return(obj)
   })
 
 #' Compute ARIs
 #' 
-#' Computes Adjusted Rand Index for a specific categorical variable, using the 
+#' @description Computes Adjusted Rand Index for a specific categorical variable, using the 
 #' fastcluster's fast hierarchical clustering implementation.
+#' @section Assessment: 
+#' 
 #' @family ComputeARIs
 #' @param obj a BenchmarkMetrics object.
 #' @param labels a character vector of variables you want to compute ARI for.
@@ -63,9 +67,7 @@ setMethod(
 #' @param ... Additional params for other methods
 #' @param num_cross_validation an integer specifying how fold cross validation to do. Default is 1 (no cross validation).
 #' @return a BenchmarkMetrics object with computed ARIs under the ARI slot. 
-#' @name ComputeARIs
 #' 
-#' @export
 setGeneric('ComputeARIs',
            function(obj,
                     labels, 
@@ -77,8 +79,7 @@ setGeneric('ComputeARIs',
              {standardGeneric('ComputeARIs')})
 
 #' Compute ARIs for BenchmarkMetrics objects
-#' 
-#' Computes Adjusted Rand Index for a specific categorical variable, using the 
+#' @description Computes Adjusted Rand Index for a specific categorical variable, using the 
 #' fastcluster's fast hierarchical clustering implementation.
 #' @family ComputeARIs
 #' @param obj a BenchmarkMetrics object.
@@ -89,9 +90,8 @@ setGeneric('ComputeARIs',
 #' @param ... Additional params for other methods
 #' @param num_cross_validation an integer specifying how fold cross validation to do. Default is 1 (no cross validation).
 #' @return a BenchmarkMetrics object with computed ARIs under the ARI slot. 
-#' 
-#' @export
 #' @rdname ComputeARIs_BenchmarkMetrics
+#' @export
 setMethod('ComputeARIs', 
           signature = c(obj = 'BenchmarkMetrics'),
           function(obj,

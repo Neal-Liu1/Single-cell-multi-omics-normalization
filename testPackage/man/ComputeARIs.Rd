@@ -36,3 +36,12 @@ a BenchmarkMetrics object with computed ARIs under the ARI slot.
 Computes Adjusted Rand Index for a specific categorical variable, using the 
 fastcluster's fast hierarchical clustering implementation.
 }
+\section{Assessment}{
+
+}
+
+\seealso{
+Other ComputeARIs: 
+\code{\link{ComputeARIs,BenchmarkMetrics-method}}
+}
+\concept{ComputeARIs}
