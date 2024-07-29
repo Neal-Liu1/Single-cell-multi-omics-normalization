@@ -1,0 +1,126 @@
+---
+title: "panc8 rnaseq"
+author: "Neal Liu"
+date: "2024-07-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries & our own helper functions
+
+```{r}
+library(SeuratData)
+library(Seurat)
+library(tidyr)
+devtools::install('testPackage')
+devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
+
+
+```
+
+# Load data
+```{r}
+#SeuratData::InstallData('panc8')
+data('panc8')
+
+```
+# See how many cells of each celltype in each platform
+```{r}
+plot_count_map(panc8@meta.data$dataset, panc8@meta.data$celltype, color_threshold = 3)
+
+```
+
+# View the libsize for each platform
+```{r}
+
+batch_rowsums <- parallel::mclapply(
+  unique(panc8@meta.data$dataset), 
+  function(batch)
+    {Rfast::rowsums(
+      panc8@assays$RNA@counts[, panc8@meta.data$dataset == batch] %>% as.matrix)})
+
+names(batch_rowsums) <- unique(panc8@meta.data$dataset)
+batch_rowsums <- as.data.frame(batch_rowsums)
+
+```
+
+# Filter out lowly expressed genes 
+```{r}
+# Split by batch
+batch_data_list <- lapply(
+  unique(panc8@meta.data$dataset), 
+  function(batch){
+    panc8@assays$RNA@counts[, panc8@meta.data$dataset == batch]})
+
+# Get Seurat vst findvariablegenes for each batch
+batch_hvgs <- lapply(batch_data_list, function(x)
+  {Seurat::FindVariableFeatures(
+    as.matrix(x),
+    selection.method = 'vst',
+    nfeatures = 13000)[['variable']]
+  }) %>% as.data.frame()
+
+# Find common variable genes
+common_hvgs <- rowSums(batch_hvgs) >= length(unique(panc8@meta.data$dataset))-1
+sum(common_hvgs) #5864
+
+```
+
+# Make the BenchmarkMetrics object
+```{r}
+
+panc8_metrics <- new('BenchmarkMetrics',
+  Algorithm = c('Raw_data', 'Seurat_LogNormalize', 'SCTransform','Seurat_CCA', 'Harmony','fastMNN', 'totalVI', 'RUVIII'),
+  Raw_data = as.matrix(panc8@assays$RNA@counts[common_hvgs,]),
+  Metadata = panc8@meta.data)
+
+panc8_metrics@Metadata$log2_libsize <- log2(Rfast::colsums(panc8_metrics@Raw_data))
+
+```
+
+# Run all
+```{r}
+panc8_metrics <- testPackage::NormalizeRNA(panc8_metrics, batch_variable = 'dataset', num_pcs = 30)
+
+```
+
+```{r}
+
+panc8_metrics <- testPackage::ComputeAssessments(panc8_metrics, variables = c('dataset', 'celltype'))
+
+```
+```{r, fig.width= 9, fig.height= 3}
+testPackage::PlotMultipleCorrelations(panc8_metrics, variables = c('dataset', 'celltype', 'log2_libsize'), titles = c('Platform', 'Celltypes', 'Libsize'))
+
+```
+
+```{r}
+p1 <- PlotMultipleLISI(panc8_metrics, 'dataset', aspect_ratio = 1.1, title = 'Platform LISI', levels = panc8_metrics@Algorithm)
+p2 <- PlotMultipleLISI(panc8_metrics, 'celltype', aspect_ratio = 1.1, title = 'Celltype LISI', levels = panc8_metrics@Algorithm)
+gridExtra::grid.arrange(p1,p2, ncol = 2)
+
+```
+
+```{r}
+p1 <- PlotMultipleSilhouette(panc8_metrics, 'celltype', plot_type = 'boxplot', aspect_ratio = 1.1, title = 'Celltype Silhouette')
+p2 <- PlotMultipleSilhouette(panc8_metrics, 'dataset', plot_type = 'boxplot', aspect_ratio = 1.1, title = 'Platform Silhouette')
+gridExtra::grid.arrange(p1,p2, ncol = 2)
+
+```
+
+```{r}
+
+
+```
+
+
+# Backup data
+```{r}
+# save.image(file= '/vast/scratch/users/liu.ne/panc8_RNAseq_backup.RData')
+# load('/vast/scratch/users/liu.ne/panc8_RNAseq_backup.RData')
+
+```
+
