@@ -1,0 +1,73 @@
+---
+title: "Influenza CITEseq"
+author: "Neal Liu"
+date: "2024-07-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+CITE-seq single cell data of baseline PBMC samples from 20 healthy individuals (10 high and 10 low responders) 
+vaccinated with influenza pandemic H1N1 and seasonal vaccines in 2009.
+
+Citation:
+Kotliarov, Y., Sparks, R. et al. Broad immune activation underlies shared set point signatures 
+for vaccine responsiveness in healthy individuals and disease activity in patients with lupus. 
+Nat. Med. DOI: https://doi.org/10.1038/s41591-020-0769-8 (2020)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries & our own helper functions
+
+```{r}
+library(SeuratObject)
+library(Seurat)
+library(tidyr)
+library(cowplot)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(mclust)
+library(edgeR)
+library(Rfast)
+library(zellkonverter)
+library(ADTnorm)
+library(dsb)
+library(harmony)
+library(batchelor)
+library(lisi)
+library(ggpubr)
+library(fastcluster)
+#devtools::install('testPackage')
+#library(testPackage)
+#source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
+source('testPackage/R/Sc_helper_functions.R')
+devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
+
+
+```
+
+# Load data from VAST
+```{r}
+data <- readRDS('/vast/scratch/users/liu.ne/21008967')
+data <- SeuratObject::UpdateSeuratObject(object = data)
+
+data2 <- readRDS('/vast/scratch/users/liu.ne/20706642')
+
+data3 <- readRDS('/vast/scratch/users/liu.ne/21347871')
+
+data4 <- readRDS('/vast/scratch/users/liu.ne/20706645')
+```
+
+```{r}
+
+
+```
+
+
+
+
