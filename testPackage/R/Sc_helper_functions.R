@@ -1,4 +1,6 @@
 
+#' 
+
 #' Run all current popular RNA normalizations
 #' @description Runs Seurat logNormalized, Seurat CCA, Seurat SCT, fastMNN and Harmony, 
 #' also computes their PCAs and records runtimes. All stored back into the BenchmarkMetrics object. 
@@ -114,12 +116,12 @@ setMethod(
 #' 
 #' @description This function computes various assessments (LISI, Silhouette, ARI) for multiple 
 #' variables in a BenchmarkMetrics object.
-#' @name ComputeAssessments
+#' @name ComputeAssessments Computes assessment metrics
 #' 
 setGeneric('ComputeAssessments',
            function(obj, variables, ...){standardGeneric('ComputeAssessments')})
 
-#' @describeIn ComputeAssessments Method for BenchmarkMetrics objects
+#' @describeIn ComputeAssessments
 #' 
 #' @param obj A BenchmarkMetrics object.
 #' @param variables A vector of variable names to compute the assessments for.
@@ -131,7 +133,6 @@ setGeneric('ComputeAssessments',
 #' # Assuming `bm` is a BenchmarkMetrics object and `vars` is a vector of variable names
 #' bm <- ComputeAssessments(bm, vars)
 #' }
-#' 
 #' @export
 #'
 setMethod(
@@ -179,7 +180,7 @@ setMethod(
 #' @param ... Additional params for other methods
 #' @param num_cross_validation an integer specifying how fold cross validation to do. Default is 1 (no cross validation).
 #' @return a BenchmarkMetrics object with computed ARIs under the ARI slot. 
-#' 
+#' @export
 setGeneric('ComputeARIs',
            function(obj,
                     labels, 
@@ -243,16 +244,17 @@ setMethod('ComputeARIs',
           })
 
 
-# plot ARIs
+#' plot ARIs generic
 #' @export
 setGeneric('PlotARIs',
-           function(obj, variable, title = "ARIs of different methods")
+           function(obj, variable, title = "ARIs of different methods", ...)
            {standardGeneric('PlotARIs')})
 
+#' plot ARIs for BenchmarkMetrics objects
 #' @export
 setMethod('PlotARIs',
-          signature= 'BenchmarkMetrics',
-          function(obj, variable, title){
+          signature= c('BenchmarkMetrics'),
+          function(obj, variable, title, ...){
             merged_ARIs_df <- data.frame(names = names(obj@ARI[[variable]]), ARI = unlist(obj@ARI[[variable]]))
             merged_ARIs_df$names <- factor(merged_ARIs_df$names, levels = obj@Algorithm)
             ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
@@ -271,7 +273,8 @@ setMethod('PlotARIs',
 
 
 
-# HVG conservation
+#' Plot HVG conservation generic
+#' @export
 setGeneric('PlotHVG_Conservation', 
            function(obj, batch_variable = 'batch', flavour = 'vst', title = 'HVG conservation plot')
            {standardGeneric('PlotHVG_Conservation')})
@@ -280,7 +283,8 @@ setGeneric('PlotHVG_Conservation',
 # compute the percentage of HVGs between the raw data and all the adjusted datasets,
 # outputting a bar graph of percentage for each adjusted dataset.
 # if raw data has multiple batches, use common HVGs across all batches instead.
-
+#' Plot HVG conservation for BenchmarkMetrics onjects
+#' @export
 setMethod('PlotHVG_Conservation', 
           signature = c(obj = 'BenchmarkMetrics'),
           function(obj, batch_variable, flavour, title)
@@ -503,15 +507,17 @@ setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
 
 
 
-# Plot silhouette for multiple datasets
-
+#' Plot silhouette for multiple datasets
+#' @export
 setGeneric("ComputeMultipleSilhouette", 
            function(obj, ...) 
              standardGeneric("ComputeMultipleSilhouette"))
+
+#' Plot silhouette for multiple datasets
 #' @export
 setMethod('ComputeMultipleSilhouette', 
           signature = c(obj = 'BenchmarkMetrics'),
-          function(obj, variables, result_format = 'per_cluster'){
+          function(obj, variables, result_format, ...){
             
             if(!all(variables %in% colnames(obj@Metadata))){
               stop('Some or all variable names you entered is not in the metadata.')}
@@ -587,17 +593,19 @@ setMethod('ComputeMultipleSilhouette',
             
             return(metrics_obj)
           })
-
-
+#' Plot silhouettes for multiple datasets
+#' @export
 setGeneric(
   'PlotMultipleSilhouette',
-  function(obj, variable,
-           plot_type = 'violin',
+  function(obj, 
+           variable,
+           plot_type,
            title,
            aspect_ratio,
            ...){
     standardGeneric('PlotMultipleSilhouette')})
 
+#' Plot silhouettes for multiple datasets
 #' @export
 setMethod(
   'PlotMultipleSilhouette',
@@ -605,7 +613,7 @@ setMethod(
   function(
     obj,
     variable,
-    plot_type,
+    plot_type = 'violin',
     title = NULL,
     aspect_ratio = 1.3,
     ...){
@@ -653,10 +661,10 @@ setMethod(
 
 
 
-
-
+#' Compute LISI for multiple datasets
+#' @export
 setGeneric('ComputeMultipleLISI',
-           function(obj, reductions , variables, metadata, metrics_obj)
+           function(obj, reductions , variables, metadata, metrics_obj, ...)
            {standardGeneric('ComputeMultipleLISI')})
 
 
@@ -682,6 +690,8 @@ setMethod('ComputeMultipleLISI',
 # and matadata as dataframe in the metadata slot,
 # Compute the LISI scores for every reduction for every variable
 # Returns the metrics obj with LISI scores in the LISI slots.
+
+#' Compute LISI for mutliple datasets
 #' @export
 setMethod('ComputeMultipleLISI', 
           signature = c(obj = 'BenchmarkMetrics',
@@ -708,12 +718,14 @@ setMethod('ComputeMultipleLISI',
             return(obj)
           })
 
-
+#' Plot LISI for multiple datasets
+#' @export
 setGeneric('PlotMultipleLISI',
            function(obj, variable, reductions, aspect_ratio = 1.3, 
                     title = NULL, levels = NULL)
            {standardGeneric('PlotMultipleLISI')})
 
+#' Plot LISI for multiple datasets
 #' @export
 setMethod('PlotMultipleLISI',
           signature = c(obj = 'BenchmarkMetrics',
@@ -821,11 +833,11 @@ setMethod('PlotCorrelations',
           })
 
 
-# Plot multiple correlation plots in a panel
-
+#' Plot multiple correlation plots in a panel
+#' @export
 setGeneric('PlotMultipleCorrelations', function(obj, variables, reductions = 'all', num_pcs = 10, titles = NULL)
 {standardGeneric('PlotMultipleCorrelations')})
-
+#' Plot multiple correlation plots in a panel
 #' @export
 setMethod('PlotMultipleCorrelations',
           signature = c(obj='BenchmarkMetrics',
@@ -874,7 +886,7 @@ setMethod('PlotMultipleCorrelations',
 )
 
 
-# Plot runtimes stored in the metrics object
+#' Plot runtimes stored in the metrics object
 #' @export
 PlotRuntime <- function(obj, title = 'Runtime', log = F){
   if(!log){df <- data.frame(time = unlist(obj@RunningTime),

@@ -8,3 +8,29 @@ Description: This package will save humanity from its eventual destruction.
 License: GPL-3
 Encoding: UTF-8
 RoxygenNote: 7.3.1
+Imports:     
+    ggplot2,
+    ggpubr,
+    Rcpp,
+    viridis,
+    BiocSingular,
+    Seurat,
+    SeuratObject,
+    gridExtra,
+    dplyr,
+    tidyr,
+    cluster,
+    mclust,
+    fastDummies,
+    stats,
+    Rfast,
+    ruv,
+    matrixStats,
+    Matrix,
+    edgeR,
+    batchelor,
+    harmony,
+    dsb,
+    ADTnorm,
+    fastcluster
+LinkingTo: Rcpp, RcppEigen

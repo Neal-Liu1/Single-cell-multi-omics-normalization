@@ -3,11 +3,11 @@
 \name{NormalizeRNA}
 \alias{NormalizeRNA}
 \alias{NormalizeRNA,BenchmarkMetrics-method}
-\title{Run all all current popular RNA normalizations}
+\title{Run all current popular RNA normalizations}
 \usage{
 NormalizeRNA(obj, batch_variable = "batch", num_pcs = 30, ...)
 
-\S4method{NormalizeRNA}{BenchmarkMetrics}(obj, params, batch_variable, num_pcs, ...)
+\S4method{NormalizeRNA}{BenchmarkMetrics}(obj, batch_variable = "batch", num_pcs = 30, ...)
 }
 \arguments{
 \item{obj}{A BenchmarkMetrics object with populated raw_data and metadata}
