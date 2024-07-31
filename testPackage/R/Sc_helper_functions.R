@@ -492,19 +492,46 @@ setMethod('FindNCG',
 
 # The benchmark metrics object 
 
-setClass('BenchmarkMetrics', slots = list(Algorithm = 'character',
-                                          Raw_data = 'matrix',
-                                          Metadata = 'data.frame',
-                                          Adj_data = 'list',
-                                          PCs = 'list',
-                                          UMAPs = 'list',
-                                          Latent_dims = 'list',
-                                          RunningTime = 'list',
-                                          Silhouette = 'list',
-                                          ARI = 'list',
-                                          LISI = 'list'))
+setClass(
+  'BenchmarkMetrics',
+  slots = list(Algorithm = 'character',
+               Raw_data = 'matrix',
+               Metadata = 'data.frame',
+               Adj_data = 'list',
+               PCs = 'list',
+               UMAPs = 'list',
+               Latent_dims = 'list',
+               RunningTime = 'list',
+               Silhouette = 'list',
+               ARI = 'list',
+               LISI = 'list'))
 
-
+#' Constructor for the BenchmarkMetrics object
+BenchmarkMetrics <- function(
+    Algorithm = character(),
+    Raw_data,
+    Metadata,
+    Adj_data = list(),
+    PCs= list(),
+    UMAPs= list(),
+    Latent_dims= list(),
+    RunningTime= list(),
+    Silhouette= list(),
+    ARI= list(),
+    LISI= list()){
+  new('BenchmarkMetrics',
+      Algorithm = Algorithm, 
+      Raw_data = Raw_data,
+      Metadata = Metadata,
+      Adj_data = Adj_data,
+      PCs = PCs,
+      UMAPs = UMAPs,
+      Latent_dims = Latent_dims,
+      RunningTime = RunningTime,
+      Silhouette = Silhouette,
+      ARI = ARI,
+      LISI = LISI)
+}
 
 
 #' Plot silhouette for multiple datasets
@@ -908,5 +935,48 @@ PlotRuntime <- function(obj, title = 'Runtime', log = F){
             panel.grid.major = element_line(color = "grey96"),
             axis.text.x = element_text(size = 10,angle = 45,hjust = 1)))
 }
+
+
+
+
+#' Filter out lowly expressed genes using Seurat's variance stabilizing transformation
+
+setGeneric('FilterLowlyExpressedGenes', 
+           function(obj, 
+                    batch_variable, 
+                    ngenes_per_batch = 10000, 
+                    ...){
+             standardGeneric('FilterLowlyExpressedGenes')})
+
+setMethod(
+  'FilterLowlyExpressedGenes',
+  signature = c(obj = 'BenchmarkMetrics'),
+  function(obj, 
+           batch_variable,
+           ngenes_per_batch, 
+           n_not_detected_batch_to_permit = 1,
+           ...){
+    
+    message('Splitting data by batch \U0001F92F')
+    batch_data_list <- lapply(
+      unique(obj@Metadata[[batch_variable]]),
+      function(batch){
+        obj@Raw_data[, obj@Metadata[[batch_variable]] == batch]})
+    
+    message(paste0('Running VST and selecting top ',ngenes_per_batch,' genes per batch \U0001F92F'))
+    batch_hvgs <- lapply(
+      batch_data_list, 
+      function(x){
+        Seurat::FindVariableFeatures(
+          as.matrix(x),
+          selection.method = 'vst',
+          nfeatures = ngenes_per_batch)[['variable']]
+      }) %>% as.data.frame()
+    message(paste0('Finding intersection between the ',ngenes_per_batch,' genes per batch \U0001F92F'))
+    common_hvgs <- rowSums(batch_hvgs) >= length(unique(obj@Metadata[[batch_variable]]))- n_not_detected_batch_to_permit
+    message(paste0('Found ', sum(common_hvgs), ' HVGs across all batches \U0001F92F'))
+    obj@Raw_data <- obj@Raw_data[common_hvgs,]
+    return(obj)
+  })
 
 
