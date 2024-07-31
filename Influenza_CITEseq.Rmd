@@ -17,12 +17,8 @@ Kotliarov, Y., Sparks, R. et al. Broad immune activation underlies shared set po
 for vaccine responsiveness in healthy individuals and disease activity in patients with lupus. 
 Nat. Med. DOI: https://doi.org/10.1038/s41591-020-0769-8 (2020)
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
 
-Load libraries & our own helper functions
-
+# Load libraries & our own helper functions
 ```{r}
 library(SeuratObject)
 library(Seurat)
@@ -42,6 +38,7 @@ library(batchelor)
 library(lisi)
 library(ggpubr)
 library(fastcluster)
+library(BiocSingular)
 #devtools::install('testPackage')
 #library(testPackage)
 #source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
@@ -51,20 +48,32 @@ devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-in
 
 ```
 
-# Load data from VAST
+# Load and preprocess data
 ```{r}
-data <- readRDS('/vast/scratch/users/liu.ne/21008967')
-data <- SeuratObject::UpdateSeuratObject(object = data)
+data <- readRDS('/vast/scratch/users/liu.ne/20706645')
 
-data2 <- readRDS('/vast/scratch/users/liu.ne/20706642')
+# Somehow the old seurat object doesnt line up the cells for RNA and ADT so we need to reorder them
+processed_data <- lineup_samples(list(RNA = data@raw.data, ADT = data@assay$CITE@raw.data, Metadata = t(data@meta.data)))
 
-data3 <- readRDS('/vast/scratch/users/liu.ne/21347871')
-
-data4 <- readRDS('/vast/scratch/users/liu.ne/20706645')
 ```
-
+# Create Metrics object and run all normalizations
 ```{r}
+RNA_metrics <- BenchmarkMetrics(
+  Algorithm = c('Raw_data', 'Seurat_LogNormalize', 'SCTransform','Seurat_CCA', 'Harmony','fastMNN', 'totalVI', 'RUVIII'),
+  Raw_data = processed_data[['RNA']] %>% as.matrix(),
+  Metadata = as.data.frame(t(processed_data[['Metadata']]))
+  )
 
+RNA_metrics <- FilterLowlyExpressedGenes(RNA_metrics, batch_variable = 'batch', n_not_detected_batch_to_permit = 0, ngenes_per_batch = 9000) %>% 
+  NormalizeRNA() %>% 
+  ComputeAssessments(variables = c('batch', 'K3'))
+
+
+```
+# Backup data
+```{r}
+# save.image(file= '/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
+# load('/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
 
 ```
 
