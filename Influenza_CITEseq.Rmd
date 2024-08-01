@@ -39,6 +39,7 @@ library(lisi)
 library(ggpubr)
 library(fastcluster)
 library(BiocSingular)
+library(parallel)
 #devtools::install('testPackage')
 #library(testPackage)
 #source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
@@ -56,26 +57,73 @@ data <- readRDS('/vast/scratch/users/liu.ne/20706645')
 processed_data <- lineup_samples(list(RNA = data@raw.data, ADT = data@assay$CITE@raw.data, Metadata = t(data@meta.data)))
 
 ```
+
 # Create Metrics object and run all normalizations
 ```{r}
 RNA_metrics <- BenchmarkMetrics(
   Algorithm = c('Raw_data', 'Seurat_LogNormalize', 'SCTransform','Seurat_CCA', 'Harmony','fastMNN', 'totalVI', 'RUVIII'),
-  Raw_data = processed_data[['RNA']] %>% as.matrix(),
+  Raw_data = processed_data[['RNA']],
   Metadata = as.data.frame(t(processed_data[['Metadata']]))
   )
 
-RNA_metrics <- FilterLowlyExpressedGenes(RNA_metrics, batch_variable = 'batch', n_not_detected_batch_to_permit = 0, ngenes_per_batch = 9000) %>% 
-  NormalizeRNA() %>% 
-  ComputeAssessments(variables = c('batch', 'K3'))
+RNA_metrics <- FilterLowlyExpressedGenes(RNA_metrics, batch_variable = 'batch', n_not_detected_batch_to_permit = 0, ngenes_per_batch = 10000)
 
+# RNA_metrics <- NormalizeRNA(RNA_metrics, batch_variable = 'batch')
+
+# RNA_metrics <- ComputeAssessments(RNA_metrics, variables = c('batch', 'K3'))
 
 ```
+
+
+```{r}
+
+test <- RNA_metrics
+a <- sample(53000, 20000)
+test@Raw_data <- test@Raw_data[,a]
+test@Metadata <- test@Metadata[a,]
+test@Metadata$log2_libsize <- Rfast::colsums(as.matrix(test@Raw_data))
+
+test <- NormalizeRNA(test)
+test <- ComputeAssessments(test, variables = c('batch', 'K3'))
+
+```
+
+```{r, fig.width= 9, fig.height= 3}
+variables <- c('batch', 'K3', 'sampleid', 'log2_libsize')
+PlotMultipleCorrelations(test, variables = variables, titles = c('Batch', 'Celltype', 'Donor', 'Libsize'))
+
+```
+
+```{r}
+p1 <- PlotMultipleLISI(test, 'batch', levels = test@Algorithm, title = 'Batch LISI')
+p2 <- PlotMultipleLISI(test, 'K3', levels = test@Algorithm, title = 'Celltype LISI')
+gridExtra::grid.arrange(p1,p2, ncol=2)
+```
+```{r}
+p1 <- PlotMultipleSilhouette(test, 'batch', 'violin', 'Batch silhouette', 1.2)
+p2 <- PlotMultipleSilhouette(test, 'K3', 'violin', 'Celltype silhouette', 1.2)
+gridExtra::grid.arrange(p1,p2, ncol=2)
+```
+```{r}
+p1 <- PlotARIs(test, 'K3', title = 'Celltype ARI')
+p2 <- PlotARIs(test, 'batch', title = 'Batch ARI')
+gridExtra::grid.arrange(p1,p2, ncol=2)
+```
+```{r}
+p1 <- PlotHVG_Conservation(test, 'batch')
+p2 <- PlotRuntime(test, log=F)
+gridExtra::grid.arrange(p1,p2, ncol=2)
+```
+
 # Backup data
 ```{r}
 # save.image(file= '/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
 # load('/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
 
 ```
+
+
+
 
 
 
