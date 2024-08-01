@@ -48,7 +48,7 @@ setMethod(
     obj@Adj_data[['SCTransform']] <- Seurat::SCTransform(
       obj@Raw_data,
       cell.attr = obj@Metadata,
-      return.only.var.genes = F)$y
+      return.only.var.genes = F)$y %>% as(Class = 'dgCMatrix')
     obj@RunningTime[['SCTransform']] <- difftime(Sys.time(), start, units = 'secs')
     
     message('Starting fastMNN \U0001F92F')
@@ -97,9 +97,8 @@ setMethod(
       reduction = 'cca')
     
     Integrated_cca <- Seurat::IntegrateData(anchorset = cca_anchors)
-    
-    obj@Adj_data[['Seurat_CCA']] <- Integrated_cca@assays$integrated@data %>% as.matrix()
     obj@RunningTime[['Seurat_CCA']] <- difftime(Sys.time(), start, units = 'secs')
+    obj@Adj_data[['Seurat_CCA']] <- Integrated_cca@assays$integrated@data
     
     message('Starting PCA for the adjusted data \U0001F92F')
     obj@PCs[['Seurat_LogNormalize']] <- run_PCA(obj@Adj_data[['Seurat_LogNormalize']], pcs = num_pcs)$u
@@ -495,7 +494,7 @@ setMethod('FindNCG',
 setClass(
   'BenchmarkMetrics',
   slots = list(Algorithm = 'character',
-               Raw_data = 'matrix',
+               Raw_data = 'dgCMatrix',
                Metadata = 'data.frame',
                Adj_data = 'list',
                PCs = 'list',
@@ -521,7 +520,7 @@ BenchmarkMetrics <- function(
     LISI= list()){
   new('BenchmarkMetrics',
       Algorithm = Algorithm, 
-      Raw_data = Raw_data,
+      Raw_data = as(Raw_data, 'dgCMatrix'),
       Metadata = Metadata,
       Adj_data = Adj_data,
       PCs = PCs,
@@ -534,10 +533,13 @@ BenchmarkMetrics <- function(
 }
 
 
+
+
+
 #' Plot silhouette for multiple datasets
 #' @export
 setGeneric("ComputeMultipleSilhouette", 
-           function(obj, ...) 
+           function(obj, variables, result_format = 'per_cluster', ...) 
              standardGeneric("ComputeMultipleSilhouette"))
 
 #' Plot silhouette for multiple datasets
@@ -626,9 +628,9 @@ setGeneric(
   'PlotMultipleSilhouette',
   function(obj, 
            variable,
-           plot_type,
-           title,
-           aspect_ratio,
+           plot_type = 'violin',
+           title = 'Silhouette Plot',
+           aspect_ratio = 1.3,
            ...){
     standardGeneric('PlotMultipleSilhouette')})
 
@@ -640,9 +642,9 @@ setMethod(
   function(
     obj,
     variable,
-    plot_type = 'violin',
-    title = NULL,
-    aspect_ratio = 1.3,
+    plot_type,
+    title,
+    aspect_ratio,
     ...){
     if(variable %in% colnames(obj@Metadata)){
       merged_data <- do.call(rbind, obj@Silhouette[[variable]])
