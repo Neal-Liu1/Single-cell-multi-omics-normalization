@@ -4,7 +4,7 @@
 \alias{ComputeMultipleSilhouette}
 \title{Plot silhouette for multiple datasets}
 \usage{
-ComputeMultipleSilhouette(obj, ...)
+ComputeMultipleSilhouette(obj, variables, result_format = "per_cluster", ...)
 }
 \description{
 Plot silhouette for multiple datasets

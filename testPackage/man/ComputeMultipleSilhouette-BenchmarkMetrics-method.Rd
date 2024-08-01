@@ -4,7 +4,7 @@
 \alias{ComputeMultipleSilhouette,BenchmarkMetrics-method}
 \title{Plot silhouette for multiple datasets}
 \usage{
-\S4method{ComputeMultipleSilhouette}{BenchmarkMetrics}(obj, variables, result_format, ...)
+\S4method{ComputeMultipleSilhouette}{BenchmarkMetrics}(obj, variables, result_format = "per_cluster", ...)
 }
 \description{
 Plot silhouette for multiple datasets
