@@ -275,7 +275,8 @@ setMethod('PlotARIs',
 #' Plot HVG conservation generic
 #' @export
 setGeneric('PlotHVG_Conservation', 
-           function(obj, batch_variable = 'batch', flavour = 'vst', title = 'HVG conservation plot')
+           function(obj, batch_variable = 'batch', flavour = 'vst', title = 'HVG conservation plot',
+                    n_top_hvgs = 2000)
            {standardGeneric('PlotHVG_Conservation')})
 
 # Take a metrics obj with populated adjusted data slots, 
@@ -286,7 +287,7 @@ setGeneric('PlotHVG_Conservation',
 #' @export
 setMethod('PlotHVG_Conservation', 
           signature = c(obj = 'BenchmarkMetrics'),
-          function(obj, batch_variable, flavour, title)
+          function(obj, batch_variable, flavour, title, n_top_hvgs)
           {
             # Split raw data by batch, then find common HVGs across all batches
             batch_vector <- obj@Metadata[[batch_variable]]
@@ -295,26 +296,28 @@ setMethod('PlotHVG_Conservation',
               obj@Raw_data[, batch_vector == batch]})
             batch_hvgs <- lapply(batch_data_list, function(x)
             {Seurat::FindVariableFeatures(
-              x,
-              selection.method = flavour)[['variable']]
+              as.matrix(x),
+              selection.method = flavour,
+              nfeatures = n_top_hvgs)[['variable']]
             }) %>% as.data.frame()
             
             common_hvgs <- rowSums(batch_hvgs) == length(unique_batches)
-            
             # Find HVGs for each adjusted dataset
             normalized_hvgs <- lapply(obj@Adj_data, function(x)
-            {Seurat::FindVariableFeatures(x, selection.method = flavour)[['variable']]
+            {Seurat::FindVariableFeatures(
+              as.matrix(x), 
+              selection.method = flavour, 
+              nfeatures = n_top_hvgs)[['variable']]
             })
             
             # Use bitwise AND to find conserved HVGs between adjusted and raw data
             hvg_conserv_scores <- lapply(normalized_hvgs, function(x)
-            {mean(x & common_hvgs)}) 
+            {mean(x & common_hvgs)/mean(common_hvgs)}) 
             
             # Plot
             df <- data.frame(method = names(hvg_conserv_scores),
                              values = unlist(hvg_conserv_scores))
             df$method <- factor(df$method, levels = obj@Algorithm)
-            
             return(
               ggplot(df, aes(x= method, y = values, fill = method))+
                 geom_bar(stat = "identity", colour = 'black') +
@@ -325,8 +328,7 @@ setMethod('PlotHVG_Conservation',
                       aspect.ratio = 1/1.1,
                       axis.line = element_line(colour = "grey45", linewidth = 0.8),
                       panel.grid.major = element_line(color = "grey96"),
-                      axis.text.x = element_text(size = 10,angle = 45,hjust = 1))+
-                coord_cartesian(ylim = c(0,1)))
+                      axis.text.x = element_text(size = 10,angle = 45,hjust = 1)))
             
           })
 
