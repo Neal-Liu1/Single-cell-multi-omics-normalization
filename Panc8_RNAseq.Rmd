@@ -15,9 +15,10 @@ Load libraries & our own helper functions
 library(SeuratData)
 library(Seurat)
 library(tidyr)
-devtools::install('testPackage')
+#devtools::install('testPackage')
+library(testPackage)
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
-
+source('testPackage/R/Sc_helper_functions.R')
 
 ```
 
@@ -65,8 +66,7 @@ batch_hvgs <- lapply(batch_data_list, function(x)
 
 # Find common variable genes
 common_hvgs <- rowSums(batch_hvgs) >= length(unique(panc8@meta.data$dataset))-1
-sum(common_hvgs) #5864
-
+sum(common_hvgs) #about 9k
 ```
 
 # Make the BenchmarkMetrics object
@@ -112,10 +112,21 @@ gridExtra::grid.arrange(p1,p2, ncol = 2)
 ```
 
 ```{r}
+p1 <- PlotARIs(panc8_metrics, 'celltype', title = 'Celltype ARI')
+p2 <- PlotARIs(panc8_metrics, 'dataset', title = 'Study ARI')
+gridExtra::grid.arrange(p1,p2, ncol=2)
 
+```
+```{r}
+PlotHVG_Conservation(panc8_metrics, 'dataset')
 
 ```
 
+
+```{r}
+PlotRuntime(panc8_metrics, log= T)
+
+```
 
 # Backup data
 ```{r}

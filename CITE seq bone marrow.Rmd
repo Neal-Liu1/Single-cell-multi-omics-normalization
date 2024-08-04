@@ -1,5 +1,5 @@
 ---
-title: "WNN CITE seq & 10x Multiome"
+title: "bm CITE-seq"
 author: "Neal Liu"
 date: "2024-02-16"
 output: html_document
@@ -35,6 +35,8 @@ devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-in
 
 # load our single cell specific helper functions from the local HPC directory
 source('Sc_helper_functions.R')
+#devtools::install_github('Neal-Liu1/Single-cell-multi-omics-normalization/testPackage')
+devtools::install('testPackage')
 
 set.seed(42)
 
@@ -50,7 +52,6 @@ library(ADTnorm)
 
 # install.packages('dsb')
 library(dsb)
-library(scran)
 library(harmony)
 
 # Load fastRUVIII
@@ -59,10 +60,6 @@ source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 
 # BiocManager::install("batchelor")
 library(batchelor)
-
-# rerun this later
-# remotes::install_github('satijalab/seurat-wrappers')
-library(SeuratWrappers)
 
 #devtools::install_github("immunogenomics/lisi")
 library(lisi)
@@ -545,7 +542,7 @@ compute_silhouette(totalVI_adt@assays@data@listData$normalized_data, totalVI_adt
 
 ```
 
-Now we'll run ADTnorm
+# Now we'll run ADTnorm
 
 ```{r, fig.width= 10}
 data <- t(adt_data)
@@ -557,8 +554,8 @@ adt_adtnorm <- ADTnorm(data, metadata, save_outpath = '/vast/scratch/users/liu.n
 adt_adtnorm <- t(adt_adtnorm)
 
 ```
-Load our totalVI normalized data from python into R.
 
+# Load our totalVI normalized data from python into R.
 ```{r}
 library(zellkonverter)
 totalVI_adt <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_adt.h5ad')
@@ -2015,7 +2012,7 @@ PlotHVG_Conservation(test, batch_variable = 'study')
 ```
 
 ```{r}
-PlotRuntime(test)
+PlotRuntime(test, T)
 
 ```
 
@@ -2042,9 +2039,7 @@ zellkonverter::writeH5AD(test1, file = '/vast/scratch/users/liu.ne/merged_RNA.h5
 setGeneric(
   'NormalizeRNA',
   function(obj, params, batch_variable = 'batch', num_pcs = 30)
-    {standardGeneric('NormalizeRNA')
-    }
-  )
+    {standardGeneric('NormalizeRNA')})
 
 setMethod(
   'NormalizeRNA',
@@ -2167,7 +2162,8 @@ test2 <- NormalizeRNA(
 ```
 
 ```{r}
-test2 <- ComputeMultipleLISI(test2, variables = c('study', 'celltype.l2_with_transfer'))
+test2 <- ComputeAssessments(test2, variables = c('study', 'celltype.l2_with_transfer'))
+
 ```
 
 ```{r}
@@ -2178,9 +2174,10 @@ p2 <- PlotMultipleLISI(test2, 'celltype.l2_with_transfer', aspect_ratio = 1.1,
 gridExtra::grid.arrange(p1,p2, ncol =2)
 
 ```
+
 ```{r}
-test2 <- ComputeARIs(test2, 'celltype.l2_with_transfer', sample_fraction = 1, num_cross_validation = 1)
-test2 <- ComputeARIs(test2, 'study', sample_fraction = 1, num_cross_validation = 1)
+#test2 <- ComputeARIs(test2, 'celltype.l2_with_transfer', sample_fraction = 1, num_cross_validation = 1)
+#test2 <- ComputeARIs(test2, 'study', sample_fraction = 1, num_cross_validation = 1)
 p1 <- PlotARIs(test2, 'celltype.l2_with_transfer', title = 'Celltype ARIs')
 p2 <- PlotARIs(test2, 'study', title = 'Study ARIs')
 gridExtra::grid.arrange(p1,p2, ncol=2)
@@ -2202,9 +2199,21 @@ PlotHVG_Conservation(test2, batch_variable = 'study')
 ```
 
 ```{r}
-PlotRuntime(test2)
+PlotRuntime(test2, log = T)
 
 ```
+
+```{r}
+
+PlotMultipleSilhouette(test2, 'celltype.l2_with_transfer', plot_type = 'boxplot', aspect_ratio = 1.2, title = 'Celltype Silhouettes (per cluster)')
+
+```
+
+```{r}
+PlotMultipleSilhouette(test2, 'study', plot_type = 'boxplot', aspect_ratio = 1.2, title = 'Study Silhouettes (per cluster)')
+
+```
+
 
 ```{r}
 # Backup data
