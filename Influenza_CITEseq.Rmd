@@ -100,8 +100,8 @@ p2 <- PlotMultipleLISI(test, 'K3', levels = test@Algorithm, title = 'Celltype LI
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
 ```{r}
-p1 <- PlotMultipleSilhouette(test, 'batch', 'violin', 'Batch silhouette', 1.2)
-p2 <- PlotMultipleSilhouette(test, 'K3', 'violin', 'Celltype silhouette', 1.2)
+p1 <- PlotMultipleSilhouette(test, 'batch', 'boxplot', 'Batch silhouette', 1.2)
+p2 <- PlotMultipleSilhouette(test, 'K3', 'boxplot', 'Celltype silhouette', 1.2)
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
 ```{r}
@@ -110,10 +110,72 @@ p2 <- PlotARIs(test, 'batch', title = 'Batch ARI')
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
 ```{r}
-p1 <- PlotHVG_Conservation(test, 'batch')
+p1 <- PlotHVG_Conservation(test, 'batch', n_top_hvgs = 628)
 p2 <- PlotRuntime(test, log=F)
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
+
+# fast python umap
+```{r}
+
+#reticulate::use_python("/stornext/System/data/apps/python/python-3.11.4/bin/python3.11")
+#reticulate::py_install("umap-learn")
+
+env_name <- "/home/users/allstaff/liu.ne/Single-cell-multi-omics-normalization/python_env"
+reticulate::virtualenv_create(
+  envname = env_name, python = "/stornext/System/data/apps/python/python-3.11.4/bin/python3.11", 
+  packages = c("umap-learn", "anndata", "scanpy", "scvi-tools"))
+
+reticulate::use_virtualenv(env_name)
+
+np <- reticulate::import('numpy')
+umap <- reticulate::import("umap")
+scvi <- reticulate::import('scvi')
+
+```
+
+```{r}
+
+fastumap <- function(matrix, neighbors = 30, min_dist = 0.01, n_components = 2){
+  
+  # a <- reticulate::r_to_py(list(backend='gpu'))
+  py_data <- reticulate::r_to_py(matrix)
+  model <- umap$UMAP(
+    n_neighbors=neighbors, 
+    min_dist= min_dist, 
+    n_components= n_components)
+
+  embeddings <- model$fit_transform(py_data)
+  embeddings_r <- reticulate::py_to_r(embeddings)
+  
+  return(embeddings_r)
+}
+
+
+
+```
+
+
+```{r}
+start <- Sys.time()
+fastumap(t(test@Raw_data[1:25,]))
+#uwot::umap(as.matrix(t(test@Raw_data[1:25,])))
+print(Sys.time()- start)
+
+```
+
+
+
+# wilcox test 
+```{r}
+
+Rfast::correls(x = test@Adj_data$Seurat_LogNormalize, y = test@Metadata$batch, type = 'spearman')
+
+
+
+```
+
+
 
 # Backup data
 ```{r}
@@ -123,8 +185,16 @@ gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
 
 
+```{r}
+
+rownames(dat) <- c("feature1", "feature2", "feature3", "feature4")
+colnames(dat) <- paste("Sample", 1:10)
+
+#Calculate UMAP
+fast_uamp(dat)
 
 
+```
 
 
 
