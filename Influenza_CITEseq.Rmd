@@ -40,6 +40,7 @@ library(ggpubr)
 library(fastcluster)
 library(BiocSingular)
 library(parallel)
+library(rnndescent)
 #devtools::install('testPackage')
 #library(testPackage)
 #source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
@@ -51,7 +52,7 @@ devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-in
 
 # Load and preprocess data
 ```{r}
-data <- readRDS('/vast/scratch/users/liu.ne/20706645')
+# data <- readRDS('/vast/scratch/users/liu.ne/20706645')
 
 # Somehow the old seurat object doesnt line up the cells for RNA and ADT so we need to reorder them
 processed_data <- lineup_samples(list(RNA = data@raw.data, ADT = data@assay$CITE@raw.data, Metadata = t(data@meta.data)))
@@ -115,52 +116,69 @@ p2 <- PlotRuntime(test, log=F)
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
 
-# fast python umap
-```{r}
-
-#reticulate::use_python("/stornext/System/data/apps/python/python-3.11.4/bin/python3.11")
-#reticulate::py_install("umap-learn")
-
-env_name <- "/home/users/allstaff/liu.ne/Single-cell-multi-omics-normalization/python_env"
-reticulate::virtualenv_create(
-  envname = env_name, python = "/stornext/System/data/apps/python/python-3.11.4/bin/python3.11", 
-  packages = c("umap-learn", "anndata", "scanpy", "scvi-tools"))
-
-reticulate::use_virtualenv(env_name)
-
-np <- reticulate::import('numpy')
-umap <- reticulate::import("umap")
-scvi <- reticulate::import('scvi')
-
-```
 
 ```{r}
-
+"
 fastumap <- function(matrix, neighbors = 30, min_dist = 0.01, n_components = 2){
-  
-  # a <- reticulate::r_to_py(list(backend='gpu'))
-  py_data <- reticulate::r_to_py(matrix)
-  model <- umap$UMAP(
-    n_neighbors=neighbors, 
-    min_dist= min_dist, 
-    n_components= n_components)
-
-  embeddings <- model$fit_transform(py_data)
-  embeddings_r <- reticulate::py_to_r(embeddings)
-  
-  return(embeddings_r)
+  embeddings <- uwot::umap(
+    matrix,
+    n_neighbors = neighbors, 
+    min_dist = min_dist, 
+    n_components = n_components)
+  return(embeddings)
 }
+"
+setGeneric('ComputeUMAP',
+           function(obj, 
+                    neighbors = 30, 
+                    min_dist = 0.01, 
+                    n_components = 2, 
+                    parallel = T, 
+                    ...){
+             standardGeneric('ComputeUMAP')
+           })
 
+setMethod(
+  'ComputeUMAP',
+  signature = 'BenchmarkMetrics',
+  function(obj, 
+           neighbors = 30, 
+           min_dist = 0.01, 
+           n_components = 2, 
+           parallel = T, 
+           ...){
+    if(length(obj@PCs) == 0){stop("You haven't computed PCA on any of your data yet.")}
+    n_cores = parallel::detectCores()
+    names_string <- paste(names(obj@PCs), collapse = ", ")
+    message('Starting UMAPs for: ', names_string,'.')
+    if(parallel){message('Parallel enabled. Using ',n_cores-2,' cores.')}
+    umaps <- parallel::mclapply(obj@PCs, function(x){
+      uwot::umap(
+        x, 
+        n_neighbors = neighbors, 
+        min_dist = min_dist, 
+        n_components = n_components, 
+        nn_method = 'annoy',
+        metric = 'euclidean')})
+    obj@UMAPs <- umaps
+    return(obj)
+    
+    })
+
+
+```
+
+```{r}
+
+plot_UMAP(test@UMAPs$SCTransform, test@Metadata$batch, run_umap = F, alpha = 0.4)
+plot_UMAP(test@UMAPs$SCTransform, test@Metadata$K3, run_umap = F, alpha = 0.4)
 
 
 ```
 
 
 ```{r}
-start <- Sys.time()
-fastumap(t(test@Raw_data[1:25,]))
-#uwot::umap(as.matrix(t(test@Raw_data[1:25,])))
-print(Sys.time()- start)
+
 
 ```
 
@@ -181,18 +199,6 @@ Rfast::correls(x = test@Adj_data$Seurat_LogNormalize, y = test@Metadata$batch, t
 ```{r}
 # save.image(file= '/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
 # load('/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
-
-```
-
-
-```{r}
-
-rownames(dat) <- c("feature1", "feature2", "feature3", "feature4")
-colnames(dat) <- paste("Sample", 1:10)
-
-#Calculate UMAP
-fast_uamp(dat)
-
 
 ```
 
