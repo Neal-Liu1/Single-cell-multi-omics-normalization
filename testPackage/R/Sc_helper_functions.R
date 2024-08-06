@@ -922,7 +922,7 @@ setMethod('PlotMultipleCorrelations',
 PlotRuntime <- function(obj, title = 'Runtime', log = F){
   if(!log){df <- data.frame(time = unlist(obj@RunningTime),
                    method = names(obj@RunningTime))
-  ylab = 'Runtime (seconds)'}
+  ylab = 'Runtime (minutes)'}
   if(log){df <- data.frame(time = log2(unlist(obj@RunningTime)),
                      method = names(obj@RunningTime))
   ylab = 'Runtime (log2 seconds)'}
@@ -984,3 +984,50 @@ setMethod(
   })
 
 
+#' Compute UMAP
+#' @export
+setGeneric('ComputeUMAP',
+           function(obj, 
+                    neighbors = 30, 
+                    min_dist = 0.01, 
+                    n_components = 2, 
+                    parallel = T,
+                    nn_method = c('annoy', 'nndescent'),
+                    metric = c('euclidean', 'cosine', 'manhattan', 'correlation'),
+                    ...){
+             standardGeneric('ComputeUMAP')
+           })
+
+#' Compute UMAP
+#' @export
+setMethod(
+  'ComputeUMAP',
+  signature = 'BenchmarkMetrics',
+  function(obj, 
+           neighbors, 
+           min_dist, 
+           n_components, 
+           parallel, 
+           nn_method,
+           metric,
+           ...){
+    if(length(nn_method) > 1){nn_method <- nn_method[1]}
+    if(length(metric) > 1){metric <- metric[1]}
+    if(length(obj@PCs) == 0){stop("You haven't computed PCA on any of your data yet.")}
+    n_cores = parallel::detectCores()
+    names_string <- paste(names(obj@PCs), collapse = ", ")
+    message('Starting UMAPs for: ', names_string,'.')
+    if(parallel){message('Parallel enabled. Using ',n_cores-2,' cores.')}
+    start <- Sys.time()
+    umaps <- parallel::mclapply(obj@PCs, function(x){
+      uwot::umap(
+        x, 
+        n_neighbors = neighbors, 
+        min_dist = min_dist, 
+        n_components = n_components, 
+        nn_method = nn_method,
+        metric = metric)})
+    obj@UMAPs <- umaps
+    message('UMAP completed in ', round(difftime(Sys.time(), start, 'mins'), digits = 2), ' minutes.')
+    return(obj)
+  })
