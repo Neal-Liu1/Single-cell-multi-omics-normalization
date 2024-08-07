@@ -100,99 +100,49 @@ p1 <- PlotMultipleLISI(test, 'batch', levels = test@Algorithm, title = 'Batch LI
 p2 <- PlotMultipleLISI(test, 'K3', levels = test@Algorithm, title = 'Celltype LISI')
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
+
 ```{r}
 p1 <- PlotMultipleSilhouette(test, 'batch', 'boxplot', 'Batch silhouette', 1.2)
 p2 <- PlotMultipleSilhouette(test, 'K3', 'boxplot', 'Celltype silhouette', 1.2)
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
+
 ```{r}
 p1 <- PlotARIs(test, 'K3', title = 'Celltype ARI')
 p2 <- PlotARIs(test, 'batch', title = 'Batch ARI')
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
+
 ```{r}
 p1 <- PlotHVG_Conservation(test, 'batch', n_top_hvgs = 628)
 p2 <- PlotRuntime(test, log=F)
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
 
+```{r}
+test <- ComputeUMAP(test)
+
+```
 
 ```{r}
-"
-fastumap <- function(matrix, neighbors = 30, min_dist = 0.01, n_components = 2){
-  embeddings <- uwot::umap(
-    matrix,
-    n_neighbors = neighbors, 
-    min_dist = min_dist, 
-    n_components = n_components)
-  return(embeddings)
-}
-"
-setGeneric('ComputeUMAP',
-           function(obj, 
-                    neighbors = 30, 
-                    min_dist = 0.01, 
-                    n_components = 2, 
-                    parallel = T, 
-                    ...){
-             standardGeneric('ComputeUMAP')
-           })
-
-setMethod(
-  'ComputeUMAP',
-  signature = 'BenchmarkMetrics',
-  function(obj, 
-           neighbors = 30, 
-           min_dist = 0.01, 
-           n_components = 2, 
-           parallel = T, 
-           ...){
-    if(length(obj@PCs) == 0){stop("You haven't computed PCA on any of your data yet.")}
-    n_cores = parallel::detectCores()
-    names_string <- paste(names(obj@PCs), collapse = ", ")
-    message('Starting UMAPs for: ', names_string,'.')
-    if(parallel){message('Parallel enabled. Using ',n_cores-2,' cores.')}
-    umaps <- parallel::mclapply(obj@PCs, function(x){
-      uwot::umap(
-        x, 
-        n_neighbors = neighbors, 
-        min_dist = min_dist, 
-        n_components = n_components, 
-        nn_method = 'annoy',
-        metric = 'euclidean')})
-    obj@UMAPs <- umaps
-    return(obj)
-    
-    })
-
+plot_UMAP(test@UMAPs$SCTransform, test@Metadata$batch, run_umap = F, alpha = 0.35)
+plot_UMAP(test@UMAPs$SCTransform, test@Metadata$K3, run_umap = F, alpha = 0.35)
 
 ```
 
 ```{r}
 
-plot_UMAP(test@UMAPs$SCTransform, test@Metadata$batch, run_umap = F, alpha = 0.4)
-plot_UMAP(test@UMAPs$SCTransform, test@Metadata$K3, run_umap = F, alpha = 0.4)
-
 
 ```
-
-
-```{r}
-
-
-```
-
-
 
 # wilcox test 
 ```{r}
-
-Rfast::correls(x = test@Adj_data$Seurat_LogNormalize, y = test@Metadata$batch, type = 'spearman')
-
-
+hist(wilcoxon_test(as.matrix(test@Raw_data), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
+hist(wilcoxon_test(as.matrix(test@Adj_data$Seurat_LogNormalize), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
+hist(wilcoxon_test(as.matrix(test@Adj_data$Seurat_CCA), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
+hist(wilcoxon_test(as.matrix(test@Adj_data$SCTransform), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
 
 ```
-
 
 
 # Backup data
