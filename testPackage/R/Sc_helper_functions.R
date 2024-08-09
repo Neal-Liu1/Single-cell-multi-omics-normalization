@@ -41,7 +41,7 @@ setMethod(
     message('Starting Seurat LogNormalize \U0001F92F')
     start <- Sys.time()
     obj@Adj_data[['Seurat_LogNormalize']] <- Seurat::NormalizeData(obj@Raw_data)
-    obj@RunningTime[['Seurat_LogNormalize']] <- difftime(Sys.time(), start, units = 'secs')
+    obj@RunningTime[['Seurat_LogNormalize']] <- difftime(Sys.time(), start, units = 'mins')
     
     message('Starting Seurat SCTransform \U0001F92F')
     start <- Sys.time()
@@ -49,7 +49,7 @@ setMethod(
       obj@Raw_data,
       cell.attr = obj@Metadata,
       return.only.var.genes = F)$y %>% as(Class = 'dgCMatrix')
-    obj@RunningTime[['SCTransform']] <- difftime(Sys.time(), start, units = 'secs')
+    obj@RunningTime[['SCTransform']] <- difftime(Sys.time(), start, units = 'mins')
     
     message('Starting fastMNN \U0001F92F')
     start <- Sys.time()
@@ -58,14 +58,14 @@ setMethod(
       batch = obj@Metadata[[batch_variable]],
       subset.row = HVGs,
       d = num_pcs)@int_colData$reducedDims$corrected
-    obj@RunningTime[['fastMNN']] <- difftime(Sys.time(), start, units = 'secs')
+    obj@RunningTime[['fastMNN']] <- difftime(Sys.time(), start, units = 'mins')
     
     message('FastMNN finished. Starting Harmony \U0001F92F')
     start <- Sys.time()
     obj@PCs[['Harmony']] <- harmony::RunHarmony(
       data_mat = obj@PCs[['Raw_data']],
       meta_data = obj@Metadata[[batch_variable]])
-    obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'secs')
+    obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'mins')
     
     
     
@@ -111,6 +111,86 @@ setMethod(
 
 
 
+#' Run all current popular ADT normalizations
+#' @description Runs Seurat CLR, DSB, ADTnorm and Harmony, 
+#' also computes their PCAs and records runtimes. All stored back into the BenchmarkMetrics object. 
+#' 
+#' @param obj A BenchmarkMetrics object with populated raw_data and metadata
+#' @param batch_variable A string indicating which metadata column corresponds to batch information
+#' @param num_pcs An integer indicating how many PCs to compute for dim reduction. Default is set to 10, but you might want to change depending on how many ADTs you have.
+#' @param ... Additional arguments for other methods (currently not used)
+#' @return A BenchmarkMetrics object with the adjusted data, their PCs and runtimes added to the corresponding slots.
+#' @export
+
+
+setGeneric(
+  'NormalizeADT',
+  function(obj, params, batch_variable = 'batch', num_pcs = 10)
+  {standardGeneric('NormalizeADT')
+  }
+)
+
+setMethod(
+  'NormalizeADT',
+  signature = c(obj = 'BenchmarkMetrics',
+                params = 'list'),
+  function(obj, params, batch_variable, num_pcs)
+  {
+    if(is.null(obj@Raw_data))
+    {stop('Your metrics object does not have any raw data')}
+    if(is.null(obj@Metadata))
+    {stop('Your metrics object does not have any metadata')}
+    
+    message('Starting DSB')
+    start <- Sys.time()
+    obj@Adj_data[['DSB']] <- dsb::ModelNegativeADTnorm(
+      t(obj@Raw_data), 
+      use.isotype.control = F)
+    obj@RunningTime[['DSB']] <- difftime(Sys.time(), start, units = 'mins')
+    obj@Adj_data[['DSB']] <- obj@Adj_data[['DSB']] %>% t()
+    
+    message('Starting CLR')
+    start <- Sys.time()
+    obj@Adj_data[['CLR']] <- NormalizeData(
+      obj@Raw_data, 
+      normalization.method = 'CLR', 
+      margin = 2)
+    obj@RunningTime[['CLR']] <- difftime(Sys.time(), start, units = 'mins')
+    
+    message('Starting PCA for raw counts')
+    obj@PCs[['Raw_counts']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
+    
+    message('Starting Harmony on PCA for raw counts')
+    start <- Sys.time()
+    obj@PCs[['Harmony']] <- harmony::RunHarmony(
+      data_mat = obj@PCs[['Raw_counts']],
+      meta_data = obj@Metadata[[batch_variable]])
+    obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'mins')
+    
+    message('Starting ADTnorm')
+    start <- Sys.time()
+    obj@Adj_data[['ADTnorm']] <- ADTnorm(
+      cell_x_adt = as.matrix(t(obj@Raw_data)), 
+      cell_x_feature = data.frame(sample = obj@Metadata[[batch_variable]]),
+      save_outpath = '/vast/scratch/users/liu.ne/')
+    obj@RunningTime[['ADTnorm']] <- difftime(Sys.time(), start, units = 'mins')
+    obj@Adj_data[['ADTnorm']] <- obj@Adj_data[['ADTnorm']] %>% t()
+    
+    # NEED TO ADD TOTALVI & RUVIII
+    
+    message('Starting PCA for the adjusted data')
+    obj@PCs[['DSB']] <- run_PCA(obj@Adj_data[['DSB']], pcs = num_pcs)$u
+    obj@PCs[['CLR']] <- run_PCA(obj@Adj_data[['CLR']], pcs = num_pcs)$u
+    obj@PCs[['ADTnorm']] <- run_PCA(obj@Adj_data[['ADTnorm']], pcs = num_pcs)$u
+    
+    return(obj)
+    
+  }
+)
+
+
+
+
 #' Compute Assessments
 #' 
 #' @description This function computes various assessments (LISI, Silhouette, ARI) for multiple 
@@ -139,8 +219,10 @@ setMethod(
   signature = c(obj = 'BenchmarkMetrics'),
   function(obj,
            variables,
+           ari_sampling = 0.1,
+           ari_cv = 5,
            ...){
-    
+    require(parallel)
     if(!all(variables %in% colnames(obj@Metadata))){
       stop('Some/all variables you entered is not in the metadata \U0001F92F')
     }
@@ -156,7 +238,8 @@ setMethod(
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
                    ' seconds \U0001F92F\nStarting ARI calculation \U0001F92F'))
     for(variable in variables){
-      obj <- ComputeARIs(obj, variable)
+      obj <- ComputeARIs(obj, variable, num_cross_validation = ari_cv, 
+                         sample_fraction = ari_sampling)
     }
     message(paste0('ARI finished in ',
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
@@ -993,7 +1076,9 @@ setGeneric('ComputeUMAP',
                     n_components = 2, 
                     parallel = T,
                     nn_method = c('annoy', 'nndescent'),
-                    metric = c('euclidean', 'cosine', 'manhattan', 'correlation'),
+                    metric = c('cosine', 'euclidean', 'manhattan', 'correlation'),
+                    method = c('umap-learn', 'uwot'),
+                    n_cores = NULL,
                     ...){
              standardGeneric('ComputeUMAP')
            })
@@ -1010,24 +1095,63 @@ setMethod(
            parallel, 
            nn_method,
            metric,
+           method,
+           n_cores,
            ...){
     if(length(nn_method) > 1){nn_method <- nn_method[1]}
+    if(length(method) > 1){method <- method[1]}
     if(length(metric) > 1){metric <- metric[1]}
     if(length(obj@PCs) == 0){stop("You haven't computed PCA on any of your data yet.")}
-    n_cores = parallel::detectCores()
+    if(parallel & is.null(n_cores)){n_cores <- parallel::detectCores()-2}
     names_string <- paste(names(obj@PCs), collapse = ", ")
     message('Starting UMAPs for: ', names_string,'.')
-    if(parallel){message('Parallel enabled. Using ',n_cores-2,' cores.')}
+    if(parallel){message('Parallel enabled. Using ',n_cores,' cores.')}
     start <- Sys.time()
+    
+    if(method == 'uwot'){
+      if(nn_method == 'nndescent'){require('rnndescent')}
     umaps <- parallel::mclapply(obj@PCs, function(x){
       uwot::umap(
-        x, 
+        as.matrix(x), 
         n_neighbors = neighbors, 
         min_dist = min_dist, 
         n_components = n_components, 
         nn_method = nn_method,
-        metric = metric)})
+        metric = metric)},
+      mc.cores = n_cores)}
+    
+    if(method == 'umap-learn'){
+      umaps <- lapply(obj@PCs, function(x){
+        py_umap(
+          matrix = x, 
+          neighbors = neighbors, 
+          min_dist = min_dist, 
+          n_components = n_components,
+          metric = metric)})}
+    
     obj@UMAPs <- umaps
     message('UMAP completed in ', round(difftime(Sys.time(), start, 'mins'), digits = 2), ' minutes.')
     return(obj)
   })
+
+
+# THIS REQUIRES A PYTHON ENVIRONMENT WITH UMAP-LEARN INSTALLED
+
+"""
+reticulate::virtualenv_create(
+  envname = '/home/users/allstaff/liu.ne/scMultiOmics-normalization/fastruv_env',
+  python = '/stornext/System/data/apps/python/python-3.11.4/bin/python3.11',
+  packages = c('numpy', 'umap-learn'))
+reticulate::use_virtualenv(virtualenv='/home/users/allstaff/liu.ne/scMultiOmics-normalization/fastruv_env',
+                           required = T)
+"""
+
+py_umap <- function(matrix, neighbors = 30, min_dist = 0.01, n_components = 2, metric = 'cosine'){
+  umap <- reticulate::import("umap")
+  data <- reticulate::r_to_py(matrix)
+  model <- umap$UMAP(n_neighbors= neighbors, min_dist= min_dist, n_components= n_components, metric = metric)
+  embeddings <- model$fit_transform(data)
+  embeddings <- reticulate::py_to_r(embeddings)
+  return(embeddings)
+}
+
