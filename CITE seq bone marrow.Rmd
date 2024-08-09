@@ -1781,15 +1781,15 @@ gridExtra::grid.arrange(p1,p2, ncol=2)
 
 merged_adt_ruv_pca_unscaled <- run_PCA(t(merged_adt_ruv), pcs = 11)
 merged_adt_ruv_pca_scaled <- run_PCA(t(scale(merged_adt_ruv)), pcs = 11)
+rownames(merged_adt_ruv_pca_scaled$u) <- colnames(combined_matrix)
 
-merged_adt_ruv_umap <- umap(merged_adt_ruv_pca_scaled$u)
 
 ```
 
 
 ```{r, fig.width= 10}
 p1 <- plot_UMAP(merged_adt_ruv_umap_k5$layout, run_umap = F, metadata_vector = merged_data$celltype.l2_with_transfer, 
-          title = 'RUV K2 (scaled) vs celltype ', alpha = 0.2)
+          title = 'RUV K2 vs celltype ', alpha = 0.2)
 
 p2 <- plot_UMAP(merged_adt_ruv_umap_k5$layout, run_umap = F, metadata_vector = merged_data$study, 
           title = 'vs study', alpha = 0.2)
@@ -1834,12 +1834,12 @@ adt_silhouettes <- lapply(
     }
   )
 
-merged_adt_metrics@Silhouette <- adt_silhouettes
+merged_adt_metrics@Silhouette[['celltype.l2_with_transfer']] <- adt_silhouettes
 
 ```
 
 ```{r}
-PlotMultipleSilhouette(merged_adt_metrics, aspect_ratio = 1.3, title = 'Silhouette score per celltype for 2 study adts')
+PlotMultipleSilhouette(merged_adt_metrics, variable  = 'celltype.l2_with_transfer', aspect_ratio = 1.3, title = 'Silhouette score per celltype for 2 study adts')
 
 ```
 
@@ -1849,9 +1849,9 @@ merged_adt_metrics <- ComputeMultipleLISI(merged_adt_metrics, variables = c('stu
 ```
 
 ```{r}
-p1 <- PlotMultipleLISI(merged_adt_metrics, 'study', aspect_ratio = 1.1, title = 'Study LISI', levels = adt_levels)
+p1 <- PlotMultipleLISI(merged_adt_metrics, 'study', aspect_ratio = 1.1, title = 'ADT Study LISI', levels = adt_levels)
 p2 <- PlotMultipleLISI(merged_adt_metrics, 'celltype.l2_with_transfer', aspect_ratio = 1.1, 
-                 title = 'Celltype LISI', levels = adt_levels)
+                 title = 'ADT Celltype LISI', levels = adt_levels)
 gridExtra::grid.arrange(p1,p2, ncol =2)
 
 ```
@@ -1884,77 +1884,6 @@ ggplot(merged_ARIs_df, aes(x= names , y = ARI, fill = names))+
 PlotMultipleCorrelations(merged_adt_metrics, 
                          variables = c('study','log2_adt_libsize', 'celltype.l2_with_transfer'),
                          titles = c('Study','ADT libsize', 'Celltypes'))
-
-```
-
-# The overall normalization method
-```{r}
-
-setGeneric(
-  'NormalizeADT',
-  function(obj, params, batch_variable = 'batch', num_pcs = 10)
-    {standardGeneric('NormalizeADT')
-    }
-  )
-
-setMethod(
-  'NormalizeADT',
-  signature = c(obj = 'BenchmarkMetrics',
-                params = 'list'),
-  function(obj, params, batch_variable, num_pcs)
-    {
-    if(is.null(obj@Raw_data))
-      {stop('Your metrics object does not have any raw data')}
-    if(is.null(obj@Metadata))
-      {stop('Your metrics object does not have any metadata')}
-    
-    message('Starting DSB')
-    start <- Sys.time()
-    obj@Adj_data[['DSB']] <- dsb::ModelNegativeADTnorm(
-      t(obj@Raw_data), 
-      use.isotype.control = F)
-    obj@RunningTime[['DSB']] <- Sys.time() - start
-    obj@Adj_data[['DSB']] <- obj@Adj_data[['DSB']] %>% t()
-    
-    message('Starting CLR')
-    start <- Sys.time()
-    obj@Adj_data[['CLR']] <- NormalizeData(
-      obj@Raw_data, 
-      normalization.method = 'CLR', 
-      margin = 2)
-    obj@RunningTime[['CLR']] <- Sys.time() - start
-    
-    message('Starting PCA for raw counts')
-    obj@PCs[['Raw_counts']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
-    
-    message('Starting Harmony on PCA for raw counts')
-    start <- Sys.time()
-    obj@PCs[['Harmony']] <- harmony::RunHarmony(
-      data_mat = obj@PCs[['Raw_counts']],
-      meta_data = obj@Metadata[[batch_variable]])
-    obj@RunningTime[['Harmony']] <- Sys.time() - start
-    
-    message('Starting ADTnorm')
-    start <- Sys.time()
-    obj@Adj_data[['ADTnorm']] <- ADTnorm(
-      cell_x_adt = as.matrix(t(obj@Raw_data)), 
-      cell_x_feature = data.frame(sample = obj@Metadata[[batch_variable]]),
-      save_outpath = '/vast/scratch/users/liu.ne/')
-    obj@RunningTime[['ADTnorm']] <- Sys.time() - start
-    obj@Adj_data[['ADTnorm']] <- obj@Adj_data[['ADTnorm']] %>% t()
-    
-    # NEED TO ADD TOTALVI & RUVIII
-    
-    message('Starting PCA for the adjusted data')
-    obj@PCs[['DSB']] <- run_PCA(obj@Adj_data[['DSB']], pcs = num_pcs)$u
-    obj@PCs[['CLR']] <- run_PCA(obj@Adj_data[['CLR']], pcs = num_pcs)$u
-    obj@PCs[['ADTnorm']] <- run_PCA(obj@Adj_data[['ADTnorm']], pcs = num_pcs)$u
-    
-    return(obj)
-    
-    }
-  )
-
 
 ```
 
@@ -2032,132 +1961,31 @@ zellkonverter::writeH5AD(test1, file = '/vast/scratch/users/liu.ne/merged_RNA.h5
 
 ```
 
-
-# Normalize RNA
-```{r}
-
-setGeneric(
-  'NormalizeRNA',
-  function(obj, params, batch_variable = 'batch', num_pcs = 30)
-    {standardGeneric('NormalizeRNA')})
-
-setMethod(
-  'NormalizeRNA',
-  signature = c(obj = 'BenchmarkMetrics',
-                params = 'list'),
-  function(obj, params, batch_variable, num_pcs)
-    {
-    if(is.null(obj@Raw_data))
-    {stop('Your metrics object does not have any raw data')}
-    if(is.null(obj@Metadata))
-    {stop('Your metrics object does not have any metadata')}
-    if(!batch_variable %in% colnames(obj@Metadata))
-    {stop("The batch variable name you entered doesn't exist in the metadata")}
-    
-    message('Computing PCA for raw data')
-    obj@PCs[['Raw_data']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
-    message('Computing HVGs')
-    HVGs <- Seurat::FindVariableFeatures(obj@Raw_data, 
-                                         selection.method = 'vst',
-                                         nfeatures = 2000)[['variable']]
-    
-    message('Starting Seurat LogNormalize')
-    start <- Sys.time()
-    obj@Adj_data[['Seurat_LogNormalize']] <- Seurat::NormalizeData(obj@Raw_data)
-    obj@RunningTime[['Seurat_LogNormalize']] <- difftime(Sys.time(), start, units = 'secs')
-    
-    message('Starting Seurat SCTransform')
-    start <- Sys.time()
-    obj@Adj_data[['SCTransform']] <- Seurat::SCTransform(
-      obj@Raw_data,
-      cell.attr = obj@Metadata,
-      return.only.var.genes = F)$y
-    obj@RunningTime[['SCTransform']] <- difftime(Sys.time(), start, units = 'secs')
-    
-    message('Starting fastMNN')
-    start <- Sys.time()
-    obj@PCs[['fastMNN']] <- batchelor::fastMNN(
-      obj@Raw_data,
-      batch = obj@Metadata[[batch_variable]],
-      subset.row = HVGs,
-      d = num_pcs)@int_colData$reducedDims$corrected
-    obj@RunningTime[['fastMNN']] <- difftime(Sys.time(), start, units = 'secs')
-    
-    message('FastMNN finished. Starting Harmony')
-    start <- Sys.time()
-    obj@PCs[['Harmony']] <- harmony::RunHarmony(
-      data_mat = obj@PCs[['Raw_data']],
-      meta_data = obj@Metadata[[batch_variable]])
-    obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'secs')
-    
-    
-    
-    # totalVI, RUVIII
-
-    
-    message('Starting Seurat CCA')
-    
-    seurat_object <- Seurat::CreateSeuratObject(
-      counts = obj@Raw_data, 
-      meta.data = obj@Metadata,
-      assay = 'RNA')
-    seurat_object@assays$RNA@layers$counts@Dimnames[[1]] <- rownames(obj@Raw_data)
-    
-    seurat_list <- Seurat::SplitObject(
-      seurat_object, split.by = batch_variable)
-    seurat_list <- lapply(X = seurat_list, function(x) {
-    x <- Seurat::NormalizeData(x)
-    x <- Seurat::FindVariableFeatures(
-      x, 
-      selection.method = 'vst', 
-      nfeatures = 2000)
-    }) 
-    features <- Seurat::SelectIntegrationFeatures(seurat_list)
-    start <- Sys.time()
-    cca_anchors <- Seurat::FindIntegrationAnchors(
-      object.list = seurat_list,
-      anchor.features = features,
-      reduction = 'cca')
-    
-    Integrated_cca <- Seurat::IntegrateData(anchorset = cca_anchors)
-
-    obj@Adj_data[['Seurat_CCA']] <- Integrated_cca@assays$integrated@data %>% as.matrix()
-    obj@RunningTime[['Seurat_CCA']] <- difftime(Sys.time(), start, units = 'secs')
-    
-    message('Starting PCA for the adjusted data')
-    obj@PCs[['Seurat_LogNormalize']] <- run_PCA(obj@Adj_data[['Seurat_LogNormalize']], pcs = num_pcs)$u
-    obj@PCs[['SCTransform']] <- run_PCA(obj@Adj_data[['SCTransform']], pcs = num_pcs)$u
-    obj@PCs[['Seurat_CCA']] <- run_PCA(obj@Adj_data[['Seurat_CCA']], pcs = num_pcs)$u
-    
-    return(obj)
-
-})
-
-```
-
 ```{r}
 sample2 <- sample(43000, 12000)
 test2 <- new('BenchmarkMetrics',
-             Raw_data = as.matrix(merged_counts[1:4000, sample2]),
+             Raw_data = as.matrix(merged_counts[, sample2]),
              Metadata = merged_data@meta.data[sample2,])
 test2@Algorithm <- c('Raw_data', 'Seurat_LogNormalize', 'SCTransform', 
                      'Seurat_CCA', 'Harmony', 
                      'fastMNN', 'totalVI', 'RUVIII')
 
-rownames(test2@Raw_data) <- rownames(merged_data@assays$RNA)[1:4000]
+rownames(test2@Raw_data) <- rownames(merged_data@assays$RNA)
 colnames(test2@Raw_data) <- colnames(merged_data@assays$RNA)[sample2]
 
 ```
 
 ```{r}
 
-# params = list(SCT_cell.attr = test2@Metadata$celltype.l2_with_transfer)
+params = list(ruv_k = 2)
 
 test2 <- NormalizeRNA(
   test2,
   batch_variable = 'study',
   params = params,
   num_pcs = 30)
+
+test2 <- add_fastruv(test2, k= 4, 'celltype.l2_with_transfer')
 
 ```
 
