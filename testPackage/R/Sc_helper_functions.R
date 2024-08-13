@@ -41,6 +41,7 @@ setMethod(
     message('Starting Seurat LogNormalize \U0001F92F')
     start <- Sys.time()
     obj@Adj_data[['Seurat_LogNormalize']] <- Seurat::NormalizeData(obj@Raw_data)
+    obj@PCs[['Seurat_LogNormalize']] <- run_PCA(obj@Adj_data[['Seurat_LogNormalize']], pcs = num_pcs)$u
     obj@RunningTime[['Seurat_LogNormalize']] <- difftime(Sys.time(), start, units = 'mins')
     
     message('Starting Seurat SCTransform \U0001F92F')
@@ -52,9 +53,10 @@ setMethod(
     obj@RunningTime[['SCTransform']] <- difftime(Sys.time(), start, units = 'mins')
     
     message('Starting fastMNN \U0001F92F')
+    matrix <- as.matrix(obj@Adj_data[['Seurat_LogNormalize']])
     start <- Sys.time()
     obj@PCs[['fastMNN']] <- batchelor::fastMNN(
-      obj@Raw_data,
+      matrix,
       batch = obj@Metadata[[batch_variable]],
       subset.row = HVGs,
       d = num_pcs)@int_colData$reducedDims$corrected
@@ -63,7 +65,7 @@ setMethod(
     message('FastMNN finished. Starting Harmony \U0001F92F')
     start <- Sys.time()
     obj@PCs[['Harmony']] <- harmony::RunHarmony(
-      data_mat = obj@PCs[['Raw_data']],
+      obj@PCs[['Seurat_LogNormalize']],
       meta_data = obj@Metadata[[batch_variable]])
     obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'mins')
     
@@ -101,7 +103,6 @@ setMethod(
     obj@Adj_data[['Seurat_CCA']] <- Integrated_cca@assays$integrated@data
     
     message('Starting PCA for the adjusted data \U0001F92F')
-    obj@PCs[['Seurat_LogNormalize']] <- run_PCA(obj@Adj_data[['Seurat_LogNormalize']], pcs = num_pcs)$u
     obj@PCs[['SCTransform']] <- run_PCA(obj@Adj_data[['SCTransform']], pcs = num_pcs)$u
     obj@PCs[['Seurat_CCA']] <- run_PCA(obj@Adj_data[['Seurat_CCA']], pcs = num_pcs)$u
     
@@ -1137,14 +1138,14 @@ setMethod(
 
 # THIS REQUIRES A PYTHON ENVIRONMENT WITH UMAP-LEARN INSTALLED
 
-"""
+"
 reticulate::virtualenv_create(
   envname = '/home/users/allstaff/liu.ne/scMultiOmics-normalization/fastruv_env',
   python = '/stornext/System/data/apps/python/python-3.11.4/bin/python3.11',
   packages = c('numpy', 'umap-learn'))
 reticulate::use_virtualenv(virtualenv='/home/users/allstaff/liu.ne/scMultiOmics-normalization/fastruv_env',
                            required = T)
-"""
+"
 
 py_umap <- function(matrix, neighbors = 30, min_dist = 0.01, n_components = 2, metric = 'cosine'){
   umap <- reticulate::import("umap")
