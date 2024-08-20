@@ -99,7 +99,7 @@ setMethod(
       reduction = 'cca')
     
     Integrated_cca <- Seurat::IntegrateData(anchorset = cca_anchors)
-    obj@RunningTime[['Seurat_CCA']] <- difftime(Sys.time(), start, units = 'secs')
+    obj@RunningTime[['Seurat_CCA']] <- difftime(Sys.time(), start, units = 'mins')
     obj@Adj_data[['Seurat_CCA']] <- Integrated_cca@assays$integrated@data
     
     message('Starting PCA for the adjusted data \U0001F92F')
