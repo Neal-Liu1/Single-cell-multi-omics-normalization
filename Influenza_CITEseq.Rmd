@@ -62,15 +62,17 @@ processed_data <- lineup_samples(list(RNA = data@raw.data, ADT = data@assay$CITE
 # Create Metrics object and run all normalizations
 ```{r}
 RNA_metrics <- BenchmarkMetrics(
-  Algorithm = c('Raw_data', 'Seurat_LogNormalize', 'SCTransform','Seurat_CCA', 'Harmony','fastMNN', 'totalVI', 'RUVIII'),
+  Algorithm = c('Raw_data', 'Seurat_LogNormalize', 'SCTransform','Seurat_CCA', 
+                'Harmony','fastMNN', 'totalVI', 'RUVIII'),
   Raw_data = processed_data[['RNA']],
   Metadata = as.data.frame(t(processed_data[['Metadata']]))
   )
 
-RNA_metrics <- FilterLowlyExpressedGenes(RNA_metrics, batch_variable = 'batch', n_not_detected_batch_to_permit = 0, ngenes_per_batch = 10000)
+RNA_metrics <- FilterLowlyExpressedGenes(
+  RNA_metrics, batch_variable = 'batch', 
+  n_not_detected_batch_to_permit = 0, ngenes_per_batch = 10000)
 
 # RNA_metrics <- NormalizeRNA(RNA_metrics, batch_variable = 'batch')
-
 # RNA_metrics <- ComputeAssessments(RNA_metrics, variables = c('batch', 'K3'))
 
 ```
@@ -83,8 +85,45 @@ a <- sample(53000, 20000)
 test@Raw_data <- test@Raw_data[,a]
 test@Metadata <- test@Metadata[a,]
 test@Metadata$log2_libsize <- Rfast::colsums(as.matrix(test@Raw_data))
+```
 
+```{r}
 test <- NormalizeRNA(test)
+```
+
+
+# RUVIII
+# Unsupervised PRPC
+```{r}
+test_seurat <- Seurat::CreateSeuratObject(
+  processed_data$RNA[,a], assay = 'RNA', 
+  meta.data = data.frame(t(processed_data$Metadata[,a])),
+  key = 'rna_')
+
+test_seurat@assays$ADT <- Seurat::CreateAssayObject(processed_data$ADT[,a], key = 'adt_')
+
+test_seurat <- FindCorrectedMultimodalNeighbours(
+  test_seurat, assays = c('RNA', 'ADT'), 
+  batch_variable = 'batch', 
+  normalization_methods = c('LogNormalize','CLR'),
+  npcs = c(30,18))
+
+```
+
+```{r}
+# Loading matrixExtra gives weird the no slot i in Graph error
+test_seurat <- Seurat::FindClusters(
+  test_seurat, algorithm = 2, graph.name = 'wsnn', 
+  cluster.name = 'harmony-wnn', resolution = 1.1)
+
+adjustedRandIndex(test_seurat$`harmony-wnn`, test_seurat$K3)
+```
+
+
+
+
+
+```{r}
 test <- ComputeAssessments(test, variables = c('batch', 'K3'))
 
 ```
@@ -125,8 +164,8 @@ test <- ComputeUMAP(test)
 ```
 
 ```{r}
-plot_UMAP(test@UMAPs$SCTransform, test@Metadata$batch, run_umap = F, alpha = 0.35)
-plot_UMAP(test@UMAPs$SCTransform, test@Metadata$K3, run_umap = F, alpha = 0.35)
+plot_UMAP(test@UMAPs$Seurat_CCA, test@Metadata$batch, run_umap = F, alpha = 0.35)
+plot_UMAP(test@UMAPs$Seurat_CCA, test@Metadata$K3, run_umap = F, alpha = 0.35)
 
 ```
 
@@ -145,10 +184,16 @@ hist(wilcoxon_test(as.matrix(test@Adj_data$SCTransform), test@Metadata$batch, n.
 ```
 
 
+```{r}
+
+Sparse_RUV_III(Y= t(test@Raw_data),Yrep = t(test@Raw_data),M = ruv::replicate.matrix(test@Metadata$K3), k = 2, )
+
+```
+
 # Backup data
 ```{r}
 # save.image(file= '/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
-# load('/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
+load('/vast/scratch/users/liu.ne/Influenza_CITEseq_backup.RData')
 
 ```
 
