@@ -1198,8 +1198,9 @@ average_celltypes_sparse <- function(expr_sparse, batch_info, celltype_info, min
   
   #celltype_names <- sapply(colnames(sum_matrix), function(x){unlist(strsplit(x, '[.]'))[1]})
   #colnames(avg_matrix) <- celltype_names
-  colnames(avg_matrix) <- colnames(sum_matrix)
   avg_matrix <- as.matrix(avg_matrix)
+  colnames(avg_matrix) <- colnames(sum_matrix)
+  rownames(avg_matrix) <- rownames(sum_matrix)
   
   if(length(which(colSums(avg_matrix) == 0)) == 0)
   {return(avg_matrix)}
