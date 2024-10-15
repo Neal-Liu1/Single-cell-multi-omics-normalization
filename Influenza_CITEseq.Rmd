@@ -84,7 +84,7 @@ test <- RNA_metrics
 a <- sample(53000, 20000)
 test@Raw_data <- test@Raw_data[,a]
 test@Metadata <- test@Metadata[a,]
-test@Metadata$log2_libsize <- Rfast::colsums(as.matrix(test@Raw_data))
+test@Metadata$log2_libsize <- log2(colSums(test@Raw_data))
 ```
 
 ```{r}
@@ -101,6 +101,7 @@ test_seurat <- Seurat::CreateSeuratObject(
   key = 'rna_')
 
 test_seurat@assays$ADT <- Seurat::CreateAssayObject(processed_data$ADT[,a], key = 'adt_')
+test_seurat$log2_rna_libsize <- log2(colSums(test_seurat@assays$RNA@layers$counts))
 
 test_seurat <- FindCorrectedMultimodalNeighbours(
   test_seurat, assays = c('RNA', 'ADT'), 
@@ -114,14 +115,82 @@ test_seurat <- FindCorrectedMultimodalNeighbours(
 # Loading matrixExtra gives weird the no slot i in Graph error
 test_seurat <- Seurat::FindClusters(
   test_seurat, algorithm = 2, graph.name = 'wsnn', 
-  cluster.name = 'harmony-wnn', resolution = 1.1)
+  cluster.name = 'harmony-wnn', resolution = 1)
 
-adjustedRandIndex(test_seurat$`harmony-wnn`, test_seurat$K3)
+mclust::adjustedRandIndex(test_seurat$`harmony-wnn`, test_seurat$K3)
 ```
 
+# Make PRPC
+```{r}
 
+rna_counts <- processed_data$RNA[,a]
+rownames(rna_counts) <- rownames(processed_data$RNA)
+rna_counts <- rna_counts[test@Raw_data@Dimnames[[1]],]
 
+# batch prpc
+batch_prpc <- createPrPc_default(
+  rna_counts, test_seurat$`harmony-wnn`, 
+  test_seurat$batch, sampling = 2, colname_suffix = 'batch')
 
+# donor prpc
+donor_prpc <- createPrPc_default(
+  rna_counts, test_seurat$`harmony-wnn`,
+  test_seurat$sampleid, sampling = 3, colname_suffix = 'donor')
+
+# calculate libsize 
+test_seurat$log2_rna_libsize <- log2(colSums(test_seurat@assays$RNA@layers$counts))
+
+ls_prpc_batch1 <- createPrPc_default(
+  rna_counts[, which(test_seurat$batch == 1)], 
+  test_seurat$`harmony-wnn`[which(test_seurat$batch == 1)], 
+  test_seurat$log2_rna_libsize[which(test_seurat$batch == 1)], 
+  sampling = 4, colname_suffix = 'ls_batch1', continuous_bins = 3)
+
+ls_prpc_batch2 <- createPrPc_default(
+  rna_counts[, which(test_seurat$batch == 2)], 
+  test_seurat$`harmony-wnn`[which(test_seurat$batch == 2)], 
+  test_seurat$log2_rna_libsize[which(test_seurat$batch == 2)], 
+  sampling = 4, colname_suffix = 'ls_batch2', continuous_bins = 3)
+
+ls_prpc_all <- createPrPc_default(
+  rna_counts, 
+  test_seurat$`harmony-wnn`, 
+  test_seurat$log2_rna_libsize, 
+  sampling = 4, colname_suffix = 'ls', continuous_bins = 2)
+
+prpc <- cbind(batch_prpc, donor_prpc, ls_prpc_batch1, ls_prpc_batch2)
+
+```
+
+# Find ncg
+```{r}
+test_singlecellexperiment <- SingleCellExperiment(
+  assays= list(RNA = as.matrix(rna_counts)), colData= test_seurat@meta.data)
+
+ncg <- RUVIIIPRPS::findNcgSupervised(
+  test_singlecellexperiment, assay.name = 'RNA', bio.variables = 'harmony-wnn', 
+  uv.variables = c('log2_rna_libsize'), assess.se.obj = F, save.se.obj = F)
+
+```
+
+```{r}
+test <- RunRUVIII(
+  test, prpc, ncg, k = 4, celltype = 'harmony-wnn', 
+  M = ruv::replicate.matrix(colnames(prpc)), pcs = 30)
+
+test <- RunRUVIII(
+  test, donor_prpc, ncg, k = 2, celltype = 'harmony-wnn', 
+  M = ruv::replicate.matrix(colnames(donor_prpc)), pcs = 30)
+
+test <- RunRUVIII(
+  test, cbind(ls_prpc_batch1, ls_prpc_batch2), ncg, k = 2, celltype = 'harmony-wnn', 
+  M = ruv::replicate.matrix(colnames(cbind(ls_prpc_batch1, ls_prpc_batch2))), pcs = 30)
+
+test <- RunRUVIII(
+  test, ls_prpc_all, ncg, k = 1, celltype = 'harmony-wnn', 
+  M = ruv::replicate.matrix(colnames(ls_prpc_all)), pcs = 30)
+
+```
 
 ```{r}
 test <- ComputeAssessments(test, variables = c('batch', 'K3'))
@@ -133,6 +202,15 @@ variables <- c('batch', 'K3', 'sampleid', 'log2_libsize')
 PlotMultipleCorrelations(test, variables = variables, titles = c('Batch', 'Celltype', 'Donor', 'Libsize'))
 
 ```
+
+```{r}
+plot_PCA(test@Adj_data$RUVIII, 'ruvIII', test@Metadata$K3, 'celltypes', is_pca_obj = F, pcs_to_compute = 2)
+plot_PCA(test@Adj_data$RUVIII, 'ruvIII', test@Metadata$log2_libsize, 'libsize', is_pca_obj = F, pcs_to_compute = 2, is_continuous = T)
+plot_PCA(test@Adj_data$RUVIII, 'ruvIII', test@Metadata$sampleid, 'donor', is_pca_obj = F, pcs_to_compute = 2, is_continuous = F)
+
+```
+
+
 
 ```{r}
 p1 <- PlotMultipleLISI(test, 'batch', levels = test@Algorithm, title = 'Batch LISI')
