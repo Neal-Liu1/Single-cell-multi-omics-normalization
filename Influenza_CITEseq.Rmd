@@ -153,10 +153,10 @@ ls_prpc_batch2 <- createPrPc_default(
   sampling = 4, colname_suffix = 'ls_batch2', continuous_bins = 3)
 
 ls_prpc_all <- createPrPc_default(
-  rna_counts, 
-  test_seurat$`harmony-wnn`, 
+  rna_counts, test_seurat$`harmony-wnn`, 
   test_seurat$log2_rna_libsize, 
-  sampling = 4, colname_suffix = 'ls', continuous_bins = 2)
+  sampling = 6, colname_suffix = 'ls', 
+  continuous_bins = 2, separate_bins_by_biology = T)
 
 prpc <- cbind(batch_prpc, donor_prpc, ls_prpc_batch1, ls_prpc_batch2)
 
@@ -192,11 +192,6 @@ test <- RunRUVIII(
 
 ```
 
-```{r}
-test <- ComputeAssessments(test, variables = c('batch', 'K3'))
-
-```
-
 ```{r, fig.width= 9, fig.height= 3}
 variables <- c('batch', 'K3', 'sampleid', 'log2_libsize')
 PlotMultipleCorrelations(test, variables = variables, titles = c('Batch', 'Celltype', 'Donor', 'Libsize'))
@@ -207,10 +202,13 @@ PlotMultipleCorrelations(test, variables = variables, titles = c('Batch', 'Cellt
 plot_PCA(test@Adj_data$RUVIII, 'ruvIII', test@Metadata$K3, 'celltypes', is_pca_obj = F, pcs_to_compute = 2)
 plot_PCA(test@Adj_data$RUVIII, 'ruvIII', test@Metadata$log2_libsize, 'libsize', is_pca_obj = F, pcs_to_compute = 2, is_continuous = T)
 plot_PCA(test@Adj_data$RUVIII, 'ruvIII', test@Metadata$sampleid, 'donor', is_pca_obj = F, pcs_to_compute = 2, is_continuous = F)
-
+plot_PCA(test@Adj_data$RUVIII, 'ruvIII', test@Metadata$batch, 'batch', is_pca_obj = F, pcs_to_compute = 2, is_continuous = F)
 ```
 
+```{r}
+test <- ComputeAssessments(test, variables = c('batch', 'K3'))
 
+```
 
 ```{r}
 p1 <- PlotMultipleLISI(test, 'batch', levels = test@Algorithm, title = 'Batch LISI')
@@ -231,7 +229,7 @@ gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
 
 ```{r}
-p1 <- PlotHVG_Conservation(test, 'batch', n_top_hvgs = 628)
+p1 <- PlotHVG_Conservation(test, 'batch', n_top_hvgs = 800)
 p2 <- PlotRuntime(test, log=F)
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
@@ -242,7 +240,7 @@ test <- ComputeUMAP(test)
 ```
 
 ```{r}
-plot_UMAP(test@UMAPs$Seurat_CCA, test@Metadata$batch, run_umap = F, alpha = 0.35)
+plot_UMAP(test@UMAPs$, test@Metadata$batch, run_umap = F, alpha = 0.35)
 plot_UMAP(test@UMAPs$Seurat_CCA, test@Metadata$K3, run_umap = F, alpha = 0.35)
 
 ```
@@ -256,17 +254,69 @@ plot_UMAP(test@UMAPs$Seurat_CCA, test@Metadata$K3, run_umap = F, alpha = 0.35)
 ```{r}
 hist(wilcoxon_test(as.matrix(test@Raw_data), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
 hist(wilcoxon_test(as.matrix(test@Adj_data$Seurat_LogNormalize), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
-hist(wilcoxon_test(as.matrix(test@Adj_data$Seurat_CCA), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
+#hist(wilcoxon_test(as.matrix(test@Adj_data$Seurat_CCA), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
 hist(wilcoxon_test(as.matrix(test@Adj_data$SCTransform), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
+hist(wilcoxon_test(as.matrix(test@Adj_data$RUVIII), test@Metadata$batch, n.cores = 90)$Adj.pvalue)
 
 ```
+
+```{r}
+ADT_metrics <- BenchmarkMetrics(
+  Raw_data = processed_data[['ADT']][!grepl('sotype_', processed_data[['ADT']]@Dimnames[[1]]),],
+  Metadata = as.data.frame(t(processed_data[['Metadata']]))
+  )
+ADT_metrics@Algorithm <- c('Raw_counts', 'DSB', 'CLR', 'Harmony', 'ADTnorm', 'totalVI', 'RUVIII')
+
+ADT_metrics <- NormalizeADT(ADT_metrics, params = list(), batch_variable = 'batch')
+
+```
+
+# RUV normalization
+```{r}
+
+
+
+
+```
+
+# Plot correlations
+```{r, fig.width= 9, fig.height= 3}
+variables <- c('batch', 'K3', 'sampleid', 'log2_ADT_libsize')
+PlotMultipleCorrelations(ADT_metrics, variables = variables, titles = c('Batch', 'Celltype', 'Donor', 'Libsize'))
+
+```
+
 
 
 ```{r}
-
-Sparse_RUV_III(Y= t(test@Raw_data),Yrep = t(test@Raw_data),M = ruv::replicate.matrix(test@Metadata$K3), k = 2, )
+ADT_metrics <- ComputeAssessments(ADT_metrics, c('batch', 'K3'))
 
 ```
+
+```{r}
+p1 <- PlotMultipleLISI(ADT_metrics, 'batch', levels = ADT_metrics@Algorithm, title = 'Batch LISI')
+p2 <- PlotMultipleLISI(ADT_metrics, 'K3', levels = ADT_metrics@Algorithm, title = 'Celltype LISI')
+gridExtra::grid.arrange(p1,p2, ncol=2)
+```
+
+```{r}
+p1 <- PlotMultipleSilhouette(ADT_metrics, 'batch', 'boxplot', 'Batch silhouette', 1.2)
+p2 <- PlotMultipleSilhouette(ADT_metrics, 'K3', 'boxplot', 'Celltype silhouette', 1.2)
+gridExtra::grid.arrange(p1,p2, ncol=2)
+```
+
+```{r}
+p1 <- PlotARIs(ADT_metrics, 'K3', title = 'Celltype ARI')
+p2 <- PlotARIs(ADT_metrics, 'batch', title = 'Batch ARI')
+gridExtra::grid.arrange(p1,p2, ncol=2)
+```
+
+```{r}
+PlotRuntime(ADT_metrics, log=F)
+```
+
+
+
 
 # Backup data
 ```{r}
