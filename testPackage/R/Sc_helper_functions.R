@@ -160,13 +160,14 @@ setMethod(
       margin = 2)
     obj@RunningTime[['CLR']] <- difftime(Sys.time(), start, units = 'mins')
     
-    message('Starting PCA for raw counts')
+    message('Starting PCA for raw counts & CLR')
     obj@PCs[['Raw_counts']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
+    obj@PCs[['CLR']] <- run_PCA(obj@Adj_data[['CLR']], pcs = num_pcs)$u
     
     message('Starting Harmony on PCA for raw counts')
     start <- Sys.time()
     obj@PCs[['Harmony']] <- harmony::RunHarmony(
-      data_mat = obj@PCs[['Raw_counts']],
+      data_mat = obj@PCs[['CLR']],
       meta_data = obj@Metadata[[batch_variable]])
     obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'mins')
     
@@ -183,7 +184,7 @@ setMethod(
     
     message('Starting PCA for the adjusted data')
     obj@PCs[['DSB']] <- run_PCA(obj@Adj_data[['DSB']], pcs = num_pcs)$u
-    obj@PCs[['CLR']] <- run_PCA(obj@Adj_data[['CLR']], pcs = num_pcs)$u
+    # obj@PCs[['CLR']] <- run_PCA(obj@Adj_data[['CLR']], pcs = num_pcs)$u
     obj@PCs[['ADTnorm']] <- run_PCA(obj@Adj_data[['ADTnorm']], pcs = num_pcs)$u
     
     return(obj)
