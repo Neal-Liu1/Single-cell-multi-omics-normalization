@@ -1,10 +1,154 @@
 
-#' @useDynLib testPackage, .registration = TRUE
-#' @importFrom Rcpp sourceCpp
-NULL
+#' Create all Pseudo replicate sets for a given dataset
+#' @description Given a dgCMatrix, Seurat or SingleCellExperiment, compute 
+#' all prpc sets and outputs a single matrix.
+#' 
+#' @param obj A dgCMatrix, Seurat or SingleCellExperiment
+#' @param bio_vars A character indicating the names of the biological variables 
+#' @param uv_vars A character indicating the names of the unwanted variables you want to remove
+#' @param group_by_vars A character indicating if you want to partition each 
+#' unwanted variable by another variable. For example, make libsize replicates for each batch separately.
+#' @param separate_bins_by_biology A logical indicating which continuous uv variable 
+#' should be binned per biological group instead of globally.
+#' @param assay Which assay to use if using Seurat or SingleCellExperiment
+#' @param sampling_amount How much to sample for each biological group. Eg if set to 3, 
+#' then each celltype will have 3 replicates per batch from random sampling
+#' @param metadata Metadata containing the bio and uv variables. This is a dataframe 
+#' with rows as cells and columns as variables
+#' @param continuous_bins Number of bins to bin a continuous uv_variable. Default is 3
+#' @return A BenchmarkMetrics object with the adjusted data, their PCs and runtimes 
+#' added to the corresponding slots.
+#' @export
+
+CreatePRPC <- function(
+    obj, 
+    bio_vars, 
+    uv_vars,
+    group_by_vars,
+    separate_bins_by_biology, 
+    assay = NULL,
+    sampling_amount = 3, 
+    metadata = NULL, 
+    continuous_bins = 3){
+  
+  
+  if(length(bio_vars) > 1)
+  {bio_labels <- do.call(paste0, metadata[bio_vars])}
+  if(length(bio_vars) == 1)
+  {bio_labels <- metadata[[bio_vars]]}
+  if(length(unique(sapply(list(uv_vars, group_by_vars, separate_bins_by_biology), length))) != 1)
+  {stop("The length of uv_vars, group_by_vars, separate_bins_by_biology must all be the same \U1F92F")}
+  if(length(sampling_amount) == 1)
+  {sampling_amount <- rep(sampling_amount, length(uv_vars))}
+  if(length(sampling_amount) != 1 && length(sampling_amount) != length(uv_vars))
+  {stop('sampling_amount must be one integer or a vector the same length as uv_vars \U1F92F')}
+  if(class(obj) == 'dgCMatrix' && is.null(metadata))
+  {stop("You need to provide metadata if using just a matrix as the main object \U1F92F")}
+  if(class(obj) == 'Seurat' && is.null(assay))
+  {stop("You inputted a Seurat object but didn't specify an assay \U1F92F")}
+  if(class(obj) == 'SingleCellExperiment' && is.null(assay))
+  {stop("You inputted a SingleCellExperiment object but didn't specify an assay \U1F92F")}
+
+  if(class(obj) == 'dgCMatrix'){matrix <- obj}
+  else if(class(obj) == 'Seurat'){
+    matrix <- Seurat::GetAssayData(obj, assay = assay, layer = 'counts')
+    metadata <- obj@meta.data
+  }
+  else if(class(obj) == 'SingleCellExperiment'){
+    matrix <- assay(obj, assay)
+    metadata <- colData(obj)
+  }
+  else{stop('Your main object is not a dgCMatrix, Seurat or SingleCelleExperiment \U1F92F')}
+  
+  
+  # Log2 the matrix
+  matrix <- log2_sparse(matrix, pseudocount = 1)
+  
+  prpc <- list()
+  for(i in 1:length(uv_vars)){
+    # Get the name and vector of the uv variable
+    variable <- uv_vars[i]
+    uv_vector <- metadata[[variable]]
+    
+    # Check if we're grouping by another variable
+    if(!is.na(group_by_vars[i])){
+      message(paste0(
+        "Grouping for ", variable, " is set to '", group_by_vars[i], 
+        "'. Pseudo replicates will be created for each ", group_by_vars[i], ' separately.'))
+      
+      # Make indices for subsetting out each group
+      group_vector <- metadata[[group_by_vars[i]]]
+      group_indices <- lapply(unique(group_vector), function(x){which(group_vector == x)})
+      names(group_indices) <- unique(group_vector)
+      
+      # Do prpc separately for each group
+      for(j in names(group_indices)){
+        message(paste0('Creating pseudo-replicates for ', variable, ' and ', group_by_vars[i],' ', j, ' \U1F483'))
+        # Give different names for each group
+        grouped_variable <- paste0(variable,'_', j)
+        indices <- group_indices[[j]]
+        
+        prpc[[grouped_variable]] <- createPrPc_default(
+          matrix[,indices], bio_vector = bio_labels[indices], uv_vector = uv_vector[indices], 
+          sampling = sampling_amount[i], continuous_bins = continuous_bins, 
+          colname_suffix = grouped_variable, 
+          separate_bins_by_biology = separate_bins_by_biology[i],
+          log_transform = FALSE)
+      }
+    }
+    
+    # If not grouping, just use the bio_vector and uv_vector
+    if(is.na(group_by_vars[i])){
+      message(paste0('Creating pseudo-replicates for ', variable,' \U1F483'))
+      prpc[[variable]] <- createPrPc_default(
+        matrix, bio_vector = bio_labels, uv_vector = uv_vector, 
+        sampling = sampling_amount[i], continuous_bins = continuous_bins, 
+        colname_suffix = variable, 
+        separate_bins_by_biology = separate_bins_by_biology[i],
+        log_transform = FALSE)
+    }
+  }
+  
+  prpc <- do.call(cbind, prpc)
+  return(prpc)
+}
+
+
+#' Run RUVIII for benchmarkmetrics object
+#' @description Runs RUVIII, the PCA for its adjusted data, and records runtime.
+#'  All stored back into the BenchmarkMetrics object. 
+#' 
+#' @param obj A BenchmarkMetrics object with populated raw_data and metadata
+#' @param prpc A matrix of your pseudo replicates
+#' @param ncgs A logical indicating which genes are control genes
+#' @param celltype A vector indicating the biological groups 
+#' @param M Replicate matrix 
+#' @param pcs Number of PCs to calculate for the adjusted data
+#' @param pseudo_count The number to add to the raw counts before log transforming
+#' @return A BenchmarkMetrics object with the adjusted data, their PCs and runtimes added to the corresponding slots.
+#' @export
+RunRUVIII <- function(obj, prpc, ncgs, k, celltype, name = 'RUVIII', M = NULL, pcs = 30, pseudo_count = 1){
+  if(is.null(M)){M = ruv::replicate.matrix(obj@Metadata[[celltype]])}
+  Y <- log2_sparse(t(obj@Raw_data), pseudo_count)
+  start <- Sys.time()
+  results <- Sparse_RUV_III(
+    Y, 
+    Yrep = t(prpc), 
+    M = M, 
+    ctl = ncgs, 
+    k = k)
+  obj@RunningTime[[name]] <- difftime(Sys.time(),start, units = 'mins')
+  obj@Adj_data[[name]] <- t(results)
+  message('Computing PCA')
+  obj@PCs[[name]] <- run_PCA(obj@Adj_data[[name]], pcs)$u
+  return(obj)
+}
+
+
+
 
 #' Run all current popular RNA normalizations
-#' @description Runs Seurat logNormalized, Seurat CCA, Seurat SCT, fastMNN and Harmony, 
+#' @description Runs Seurat logNormalize, Seurat CCA, Seurat SCT, fastMNN and Harmony, 
 #' also computes their PCAs and records runtimes. All stored back into the BenchmarkMetrics object. 
 #' 
 #' @param obj A BenchmarkMetrics object with populated raw_data and metadata
@@ -120,7 +264,8 @@ setMethod(
 #' 
 #' @param obj A BenchmarkMetrics object with populated raw_data and metadata
 #' @param batch_variable A string indicating which metadata column corresponds to batch information
-#' @param num_pcs An integer indicating how many PCs to compute for dim reduction. Default is set to 10, but you might want to change depending on how many ADTs you have.
+#' @param num_pcs An integer indicating how many PCs to compute for dim reduction. 
+#' Default is set to 10, but you might want to change depending on how many ADTs you have.
 #' @param ... Additional arguments for other methods (currently not used)
 #' @return A BenchmarkMetrics object with the adjusted data, their PCs and runtimes added to the corresponding slots.
 #' @export
