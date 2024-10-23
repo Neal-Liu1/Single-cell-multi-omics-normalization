@@ -1,5 +1,5 @@
 
-#' Create all Pseudo replicate sets for a given dataset
+#' Create all Pseudo-replicate sets for a given dataset
 #' @description Given a dgCMatrix, Seurat or SingleCellExperiment, compute 
 #' all prpc sets and outputs a single matrix.
 #' 
@@ -8,8 +8,10 @@
 #' @param uv_vars A character indicating the names of the unwanted variables you want to remove
 #' @param group_by_vars A character indicating if you want to partition each 
 #' unwanted variable by another variable. For example, make libsize replicates for each batch separately.
+#' Must be the same length as uv_vars, and set to NA if you dont want to group the corresponing uv_variable.
 #' @param separate_bins_by_biology A logical indicating which continuous uv variable 
 #' should be binned per biological group instead of globally.
+#' Must be the same length as uv_vars, and set to NA if you dont want to separate the corresponing uv_variable.
 #' @param assay Which assay to use if using Seurat or SingleCellExperiment
 #' @param sampling_amount How much to sample for each biological group. Eg if set to 3, 
 #' then each celltype will have 3 replicates per batch from random sampling
