@@ -192,6 +192,33 @@ setMethod(
     obj@PCs[['Seurat_LogNormalize']] <- run_PCA(obj@Adj_data[['Seurat_LogNormalize']], pcs = num_pcs)$u
     obj@RunningTime[['Seurat_LogNormalize']] <- difftime(Sys.time(), start, units = 'mins')
     
+    message('Starting Seurat rPCA')
+    
+    seurat_object <- Seurat::CreateSeuratObject(
+      counts = obj@Raw_data, 
+      meta.data = obj@Metadata,
+      assay = 'RNA')
+    seurat_object@assays$RNA@layers$counts@Dimnames[[1]] <- rownames(obj@Raw_data)
+    
+    seurat_list <- Seurat::SplitObject(
+      seurat_object, split.by = batch_variable)
+    seurat_list <- lapply(X = seurat_list, function(x) {
+      x <- Seurat::NormalizeData(x) %>% 
+        Seurat::FindVariableFeatures() %>%
+        Seurat::ScaleData(do.scale = FALSE, do.center = TRUE) %>% 
+        Seurat::RunPCA()
+    }) 
+    features <- Seurat::SelectIntegrationFeatures(seurat_list)
+    start <- Sys.time()
+    rpca_anchors <- Seurat::FindIntegrationAnchors(
+      object.list = seurat_list,
+      anchor.features = features,
+      reduction = 'rpca')
+    
+    Integrated_rpca <- Seurat::IntegrateData(anchorset = rpca_anchors)
+    obj@RunningTime[['Seurat_rPCA']] <- difftime(Sys.time(), start, units = 'mins')
+    obj@Adj_data[['Seurat_rPCA']] <- Integrated_rpca@assays$integrated@data
+    
     message('Starting Seurat SCTransform \U0001F92F')
     start <- Sys.time()
     obj@Adj_data[['SCTransform']] <- Seurat::SCTransform(
@@ -221,38 +248,9 @@ setMethod(
     
     # totalVI, RUVIII
     
-    
-    message('Starting Seurat CCA')
-    
-    seurat_object <- Seurat::CreateSeuratObject(
-      counts = obj@Raw_data, 
-      meta.data = obj@Metadata,
-      assay = 'RNA')
-    seurat_object@assays$RNA@layers$counts@Dimnames[[1]] <- rownames(obj@Raw_data)
-    
-    seurat_list <- Seurat::SplitObject(
-      seurat_object, split.by = batch_variable)
-    seurat_list <- lapply(X = seurat_list, function(x) {
-      x <- Seurat::NormalizeData(x)
-      x <- Seurat::FindVariableFeatures(
-        x, 
-        selection.method = 'vst', 
-        nfeatures = 2000)
-    }) 
-    features <- Seurat::SelectIntegrationFeatures(seurat_list)
-    start <- Sys.time()
-    cca_anchors <- Seurat::FindIntegrationAnchors(
-      object.list = seurat_list,
-      anchor.features = features,
-      reduction = 'cca')
-    
-    Integrated_cca <- Seurat::IntegrateData(anchorset = cca_anchors)
-    obj@RunningTime[['Seurat_CCA']] <- difftime(Sys.time(), start, units = 'mins')
-    obj@Adj_data[['Seurat_CCA']] <- Integrated_cca@assays$integrated@data
-    
     message('Starting PCA for the adjusted data \U0001F92F')
     obj@PCs[['SCTransform']] <- run_PCA(obj@Adj_data[['SCTransform']], pcs = num_pcs)$u
-    obj@PCs[['Seurat_CCA']] <- run_PCA(obj@Adj_data[['Seurat_CCA']], pcs = num_pcs)$u
+    obj@PCs[['Seurat_rPCA']] <- run_PCA(obj@Adj_data[['Seurat_rPCA']], pcs = num_pcs)$u
     
     return(obj)
     
