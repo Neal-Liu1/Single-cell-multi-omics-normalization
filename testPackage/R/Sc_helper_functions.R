@@ -282,8 +282,7 @@ setGeneric(
 
 setMethod(
   'NormalizeADT',
-  signature = c(obj = 'BenchmarkMetrics',
-                params = 'list'),
+  signature = c(obj = 'BenchmarkMetrics'),
   function(obj, params, batch_variable, num_pcs)
   {
     if(is.null(obj@Raw_data))
@@ -320,7 +319,7 @@ setMethod(
     
     message('Starting ADTnorm')
     start <- Sys.time()
-    obj@Adj_data[['ADTnorm']] <- ADTnorm(
+    obj@Adj_data[['ADTnorm']] <- ADTnorm::ADTnorm(
       cell_x_adt = as.matrix(t(obj@Raw_data)), 
       cell_x_feature = data.frame(sample = obj@Metadata[[batch_variable]]),
       save_outpath = '/vast/scratch/users/liu.ne/')
