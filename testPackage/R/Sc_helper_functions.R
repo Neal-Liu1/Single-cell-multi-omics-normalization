@@ -684,7 +684,7 @@ setMethod('FindNCG',
             message(paste0('Sampling ', sample_num,' cells from your data'))
             
             # Hardcoding main data matrix to assays > RNA > layers > counts
-            if(apply_log){data <- log2(object@assays$RNA@layers$counts+1)}
+            if(apply_log){data <- log2_sparse(object@assays$RNA@layers$counts, pseudocount = 1)}
             else{data <- object@assays$RNA@layers$counts}
             
             data <- data[,sample_] %>% as.matrix()
