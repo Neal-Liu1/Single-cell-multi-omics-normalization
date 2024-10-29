@@ -8,10 +8,10 @@
 #' @param uv_vars A character indicating the names of the unwanted variables you want to remove
 #' @param group_by_vars A character indicating if you want to partition each 
 #' unwanted variable by another variable. For example, make libsize replicates for each batch separately.
-#' Must be the same length as uv_vars, and set to NA if you dont want to group the corresponing uv_variable.
+#' Must be the same length as uv_vars, and set to NA if you dont want to group the corresponding uv_variable.
 #' @param separate_bins_by_biology A logical indicating which continuous uv variable 
 #' should be binned per biological group instead of globally.
-#' Must be the same length as uv_vars, and set to NA if you dont want to separate the corresponing uv_variable.
+#' Must be the same length as uv_vars, and set to NA if you dont want to separate the corresponding uv_variable.
 #' @param assay Which assay to use if using Seurat or SingleCellExperiment
 #' @param sampling_amount How much to sample for each biological group. Eg if set to 3, 
 #' then each celltype will have 3 replicates per batch from random sampling
@@ -212,10 +212,10 @@ setMethod(
     
     message('FastMNN finished. Starting Harmony \U0001F92F')
     start <- Sys.time()
-    obj@PCs[['Harmony']] <- harmony::RunHarmony(
+    obj@PCs[['Harmony_LogNormalize']] <- harmony::RunHarmony(
       obj@PCs[['Seurat_LogNormalize']],
       meta_data = obj@Metadata[[batch_variable]])
-    obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'mins')
+    obj@RunningTime[['Harmony_LogNormalize']] <- difftime(Sys.time(), start, units = 'mins')
     
     
     
@@ -311,12 +311,12 @@ setMethod(
     obj@PCs[['Raw_counts']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
     obj@PCs[['CLR']] <- run_PCA(obj@Adj_data[['CLR']], pcs = num_pcs)$u
     
-    message('Starting Harmony on PCA for raw counts')
+    message('Starting Harmony on PCA from CLR')
     start <- Sys.time()
-    obj@PCs[['Harmony']] <- harmony::RunHarmony(
+    obj@PCs[['Harmony_CLR']] <- harmony::RunHarmony(
       data_mat = obj@PCs[['CLR']],
       meta_data = obj@Metadata[[batch_variable]])
-    obj@RunningTime[['Harmony']] <- difftime(Sys.time(), start, units = 'mins')
+    obj@RunningTime[['Harmony_CLR']] <- difftime(Sys.time(), start, units = 'mins')
     
     message('Starting ADTnorm')
     start <- Sys.time()
@@ -327,7 +327,7 @@ setMethod(
     obj@RunningTime[['ADTnorm']] <- difftime(Sys.time(), start, units = 'mins')
     obj@Adj_data[['ADTnorm']] <- obj@Adj_data[['ADTnorm']] %>% t()
     
-    # NEED TO ADD TOTALVI & RUVIII
+    # NEED TO ADD TOTALVI
     
     message('Starting PCA for the adjusted data')
     obj@PCs[['DSB']] <- run_PCA(obj@Adj_data[['DSB']], pcs = num_pcs)$u
@@ -509,7 +509,7 @@ setMethod('PlotARIs',
 #' Plot HVG conservation generic
 #' @export
 setGeneric('PlotHVG_Conservation', 
-           function(obj, batch_variable = 'batch', flavour = 'vst', title = 'HVG conservation plot',
+           function(obj, batch_variable = 'batch', flavour, title = 'HVG conservation plot',
                     n_top_hvgs = 2000)
            {standardGeneric('PlotHVG_Conservation')})
 
@@ -517,7 +517,7 @@ setGeneric('PlotHVG_Conservation',
 # compute the percentage of HVGs between the raw data and all the adjusted datasets,
 # outputting a bar graph of percentage for each adjusted dataset.
 # if raw data has multiple batches, use common HVGs across all batches instead.
-#' Plot HVG conservation for BenchmarkMetrics onjects
+#' Plot HVG conservation for BenchmarkMetrics objects
 #' @export
 setMethod('PlotHVG_Conservation', 
           signature = c(obj = 'BenchmarkMetrics'),
@@ -527,22 +527,15 @@ setMethod('PlotHVG_Conservation',
             batch_vector <- obj@Metadata[[batch_variable]]
             unique_batches <- unique(batch_vector)
             batch_data_list <- lapply(unique_batches, function(batch){
-              obj@Raw_data[, batch_vector == batch]})
+              obj@Raw_data[, batch_vector == batch] %>% as.matrix()})
             batch_hvgs <- lapply(batch_data_list, function(x)
-            {Seurat::FindVariableFeatures(
-              as.matrix(x),
-              selection.method = flavour,
-              nfeatures = n_top_hvgs)[['variable']]
-            }) %>% as.data.frame()
+            {Seurat::FindVariableFeatures(x, selection.method = flavour, nfeatures = n_top_hvgs)[['variable']]}) %>% 
+              as.data.frame()
             
             common_hvgs <- rowSums(batch_hvgs) == length(unique_batches)
             # Find HVGs for each adjusted dataset
             normalized_hvgs <- lapply(obj@Adj_data, function(x)
-            {Seurat::FindVariableFeatures(
-              as.matrix(x), 
-              selection.method = flavour, 
-              nfeatures = n_top_hvgs)[['variable']]
-            })
+            {Seurat::FindVariableFeatures(as.matrix(x), selection.method = flavour, nfeatures = n_top_hvgs)[['variable']]})
             
             # Use bitwise AND to find conserved HVGs between adjusted and raw data
             hvg_conserv_scores <- lapply(normalized_hvgs, function(x)
