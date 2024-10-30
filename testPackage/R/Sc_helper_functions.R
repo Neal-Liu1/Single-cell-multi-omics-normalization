@@ -755,7 +755,7 @@ setMethod('FindNCG',
             metadata <- object@meta.data[sample_,]
             
             message('Calculating Spearman correlation for continuous variables & F score for categorical variables')
-            corr_data <- parallel::mclapply(c(unwanted_variables, bio_variables), 
+            corr_data <- lapply(c(unwanted_variables, bio_variables), 
                                             function(x){find_corr(data, metadata[[x]])})
             
             names(corr_data) <- c(unwanted_variables, bio_variables)
