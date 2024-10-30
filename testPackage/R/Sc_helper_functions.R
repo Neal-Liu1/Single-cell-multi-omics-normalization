@@ -116,6 +116,51 @@ CreatePRPC <- function(
 }
 
 
+# Creates a prpc set for a single unwanted variable
+createPrPc_default <- function(
+    sparse_matrix, bio_vector, uv_vector,
+    sampling = 3, 
+    continuous_bins = 3,
+    colname_suffix = NULL, 
+    separate_bins_by_biology = TRUE,
+    log_transform = TRUE){
+  # Check bio and uv vectors
+  if(!class(uv_vector) %in% c('integer', 'character', 'factor', 'numeric')){
+    stop('Your uv_vector is not a continuous or categorical vector.')}
+  if(!class(bio_vector) %in% c('integer', 'character', 'factor')){
+    stop('Your bio_vector is not a continuous or categorical vector.')}
+  
+  # Do sampling   
+  sample_ <- sample(1:sampling, length(bio_vector), replace = TRUE)
+  sampled_bio_labels <- paste0(bio_vector, '-', sample_)
+  
+  # Bin continuous uv
+  if(class(uv_vector) == 'numeric' & separate_bins_by_biology == TRUE){
+    # Create df to bin per celltype
+    data <- data.frame(bio_vector = bio_vector, uv_vector = uv_vector)
+    binned_data <- data %>%
+      dplyr::group_by(bio_vector) %>%
+      dplyr::mutate(uv_vector = dplyr::ntile(uv_vector, continuous_bins)) %>%
+      dplyr::ungroup()
+    uv_vector <- binned_data$uv_vector
+  }
+  if(class(uv_vector) == 'numeric' & separate_bins_by_biology == FALSE){
+    uv_vector <- dplyr::ntile(uv_vector, continuous_bins)
+  }
+  
+  if(log_transform){sparse_matrix <- log2_sparse(sparse_matrix, pseudocount = 1)}
+  
+  prpc <- average_celltypes_sparse(
+    sparse_matrix, 
+    batch_info = uv_vector, 
+    celltype_info = sampled_bio_labels, min_cells = 5)
+  colnames(prpc) <- sub("\\-.*$", "", colnames(prpc))
+  if(!is.null(colname_suffix)){colnames(prpc) <- paste0(colnames(prpc), '_', colname_suffix)}
+  
+  return(prpc)
+}
+
+
 #' Run RUVIII for benchmarkmetrics object
 #' @description Runs RUVIII, the PCA for its adjusted data, and records runtime.
 #'  All stored back into the BenchmarkMetrics object. 
@@ -1370,6 +1415,25 @@ average_celltypes_sparse <- function(expr_sparse, batch_info, celltype_info, min
   return(avg_matrix)
 }
 
+
+# adds totalVI data to the metrics obj
+add_totalVI <- function(metrics_obj, singlecellexperiment, assay_name, pca = T, pcs = 30){
+  metrics_obj@Adj_data[['totalVI']] <- SummarizedExperiment::assay(
+    singlecellexperiment, assay_name) %>% 
+    as('dgCMatrix')
+  
+  if(pca){
+    message('Starting PCA')
+    metrics_obj@PCs[['totalVI']] <- run_PCA(
+      metrics_obj@Adj_data[['totalVI']], pcs = pcs)$u
+  }
+  
+  if("totalVI_runtime" %in% names(singlecellexperiment@metadata)){
+    metrics_obj@RunningTime[['totalVI']] <- as.difftime(
+      singlecellexperiment@metadata[["totalVI_runtime"]]/60, 
+      units = 'mins')}
+  return(metrics_obj)
+}
 
 
 
