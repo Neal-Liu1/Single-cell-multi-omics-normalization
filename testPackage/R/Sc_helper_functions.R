@@ -180,7 +180,7 @@ setMethod(
       {stop("The batch variable name you entered doesn't exist in the metadata \U0001F92F")}
     
     message('Computing PCA for raw data \U0001F92F')
-    obj@PCs[['Raw_data']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
+    obj@PCs[['Raw_counts']] <- run_PCA(obj@Raw_data, pcs = num_pcs)$u
     message('Computing HVGs \U0001F92F')
     HVGs <- Seurat::FindVariableFeatures(obj@Raw_data, 
                                          selection.method = 'vst',
@@ -414,6 +414,8 @@ setMethod(
 setGeneric('ComputeARIs',
            function(obj,
                     labels, 
+                    method = 'graph',
+                    clust_resolution = 1,
                     hclust_method = 'complete', 
                     distance_type  = 'euclidean', 
                     sample_fraction = 1, 
@@ -439,13 +441,32 @@ setMethod('ComputeARIs',
           signature = c(obj = 'BenchmarkMetrics'),
           function(obj,
                    labels,
+                   method,
+                   clust_resolution,
                    hclust_method,
                    distance_type,
                    sample_fraction,
                    num_cross_validation,
                    ...){
+            if(!method %in% c('graph', 'hclust'))
+              {stop("Please only specify 'graph' or 'hclust' for the method")}
             label_name <- labels
             labels <- obj@Metadata[[labels]]
+            
+            if(method == 'graph'){
+              message("Using 'graph' method. Using Seurat FindNeighbors to construct snn graphs.")
+              neighbours <- lapply(obj@PCs, function(x){
+                Seurat::FindNeighbors(x)[['snn']]})
+              message(paste0("Performing graph partitioning with resolution", clust_resolution))
+              clusters <- lapply(neighbours, function(x){
+                Seurat::FindClusters(x, resolution = clust_resolution, algorithm = 3)})
+              ARIs <- lapply(clusters, function(x){
+                mclust::adjustedRandIndex(labels, x[[1]])})
+              obj@ARI[[label_name]] <- ARIs
+              return(obj)
+              }
+            
+            else if(method == 'hclust'){
             ARIs <- vector("list", length = length(obj@PCs))
             names(ARIs) <- names(obj@PCs)
             for (pc_name in names(obj@PCs)) {
@@ -470,7 +491,8 @@ setMethod('ComputeARIs',
               ARIs[[pc_name]] <- mean(ari_values)
             }
             obj@ARI[[label_name]] <- ARIs
-            return(obj)
+            return(obj)}
+            
           })
 
 
@@ -1052,7 +1074,7 @@ setMethod('PlotCorrelations',
                 ggplot(pc_correlations, aes(x = PCs, y = cancor_scores, color = Datasets, group = Datasets)) +
                   geom_line(size=0.5,alpha=0.8) +
                   geom_point(alpha=0.8) +
-                  labs(x = 'Principal Components', y = 'Correlation', color = 'Dataset') +
+                  labs(x = 'Principal Components', y = 'Correlation', color = 'Method') +
                   ylim(0,1) +
                   theme_minimal() +
                   theme(axis.line = element_line(colour = "grey83", linewidth = 1.1),
