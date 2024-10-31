@@ -413,6 +413,7 @@ setMethod(
            variables,
            ari_sampling = 0.1,
            ari_cv = 5,
+           ari_resolution = 1,
            ...){
     require(parallel)
     if(!all(variables %in% colnames(obj@Metadata))){
@@ -429,10 +430,8 @@ setMethod(
     message(paste0('Silhouette finished in ', 
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
                    ' seconds \U0001F92F\nStarting ARI calculation \U0001F92F'))
-    for(variable in variables){
-      obj <- ComputeARIs(obj, variable, num_cross_validation = ari_cv, 
-                         sample_fraction = ari_sampling)
-    }
+    start <- Sys.time()
+    obj <- ComputeARIs(obj, variables, method = 'graph', clust_resolution = ari_resolution)
     message(paste0('ARI finished in ',
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
                    ' seconds \U0001F92F'))
@@ -494,8 +493,6 @@ setMethod('ComputeARIs',
                    ...){
             if(!method %in% c('graph', 'hclust'))
               {stop("Please only specify 'graph' or 'hclust' for the method")}
-            label_name <- labels
-            labels <- obj@Metadata[[labels]]
             
             if(method == 'graph'){
               message("Using 'graph' method. Using Seurat FindNeighbors to construct snn graphs.")
@@ -504,13 +501,18 @@ setMethod('ComputeARIs',
               message(paste0("Performing graph partitioning with resolution", clust_resolution))
               clusters <- lapply(neighbours, function(x){
                 Seurat::FindClusters(x, resolution = clust_resolution, algorithm = 3)})
+              for(label in labels){
+              label_name <- labels
+              labels <- obj@Metadata[[labels]]
               ARIs <- lapply(clusters, function(x){
                 mclust::adjustedRandIndex(labels, x[[1]])})
-              obj@ARI[[label_name]] <- ARIs
+              obj@ARI[[label_name]] <- ARIs}
               return(obj)
               }
             
             else if(method == 'hclust'){
+            label_name <- labels
+            labels <- obj@Metadata[[labels]]
             ARIs <- vector("list", length = length(obj@PCs))
             names(ARIs) <- names(obj@PCs)
             for (pc_name in names(obj@PCs)) {
@@ -1080,7 +1082,7 @@ setMethod('ComputeMultipleLISI',
             LISI_scores <- lapply(reduction_matrix_list,
                                   function(x){
                                     lisi::compute_lisi(
-                                      x,
+                                      x[,1:12],
                                       meta_data = metadata,
                                       label_colnames = variables)})
             obj@LISI <- LISI_scores
@@ -1110,7 +1112,7 @@ setMethod('PlotMultipleLISI',
             data <- data.frame(LISI = scores, method = names)
             
             if(!is.null(levels))
-            {data$method <- factor(data$method, levels = levels)}
+            {data$method <- factor(data$method, levels = obj@Algorithm)}
             
             ggplot(data, aes(x=method, y = LISI, fill=method))+
               geom_boxplot(outlier.shape = NA)+
