@@ -174,20 +174,19 @@ createPrPc_default <- function(
 #' @param pseudo_count The number to add to the raw counts before log transforming
 #' @return A BenchmarkMetrics object with the adjusted data, their PCs and runtimes added to the corresponding slots.
 #' @export
-RunRUVIII <- function(obj, prpc, ncgs, k, celltype, name = 'RUVIII', M = NULL, pcs = 30, pseudo_count = 1){
-  if(is.null(M)){M = ruv::replicate.matrix(obj@Metadata[[celltype]])}
-  Y <- log2_sparse(t(obj@Raw_data), pseudo_count)
+RunRUVIII <- function(obj, prpc, ncgs, k, name = 'RUVIII', pcs = 30){
   start <- Sys.time()
   results <- Sparse_RUV_III(
-    Y, 
+    log2_sparse(t(obj@Raw_data)), 
     Yrep = t(prpc), 
-    M = M, 
+    M = ruv::replicate.matrix(colnames(prpc)), 
     ctl = ncgs, 
     k = k)
   obj@RunningTime[[name]] <- difftime(Sys.time(),start, units = 'mins')
   obj@Adj_data[[name]] <- t(results)
-  message('Computing PCA')
+  message('\n Computing PCA')
   obj@PCs[[name]] <- run_PCA(obj@Adj_data[[name]], pcs)$u
+  message('\n Completed! \U1F483')
   return(obj)
 }
 
@@ -799,7 +798,7 @@ setMethod('FindNCG',
             if(apply_log){data <- log2_sparse(object@Raw_data, pseudocount = 1)}
             else{data <- object@Raw_data}
             
-            data <- data[,sample_] %>% as.matrix()
+            data <- data[,sample_] # %>% as.matrix()
             metadata <- object@Metadata[sample_,]
             
             message('Calculating Spearman correlation for continuous variables & F score for categorical variables')
@@ -817,6 +816,7 @@ setMethod('FindNCG',
             }
             corr_data <- do.call(cbind, corr_data) %>% as.data.frame()
             rownames(corr_data) <- rownames(object@Raw_data)
+            corr_data$avg_expr <- rowMeans2(data)
             ranks <- apply(corr_data, 2, rank) %>% as.data.frame()
             ranks$avg_expr <- rowMeans2(data)
             prod_ranks <- apply(ranks, 1, prod)
