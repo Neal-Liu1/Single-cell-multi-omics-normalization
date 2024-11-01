@@ -631,7 +631,7 @@ setMethod('PlotHVG_Conservation',
 
 # Plot umap
 plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/1, run_umap = T, label_is_continuous = F, 
-                      continuous_var_upper_lim = NULL, alpha = 1){
+                      continuous_var_upper_lim = NULL, alpha = 1, show_density = T){
   # taking a matrix and a vector of metadata, plot UMAP of the matrix colored by the groups in the metadata vector
   
   if(run_umap){
@@ -655,13 +655,13 @@ plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/
       geom_point(size = 0.07, alpha = alpha) +
       ggtitle(title) +
       theme_minimal() +
-      theme(axis.line = element_line(colour = "grey50", linewidth = 0.9),
+      theme(axis.line = element_line(colour = "grey30", linewidth = 0.4),
             panel.border = element_blank(),  #element_rect(colour = "grey90", fill=NA, size=0.7),
             panel.grid.major = element_blank(),  #element_line(color = "grey96"),
             panel.grid.minor = element_blank(),
             aspect.ratio = aspect_ratio,
             legend.position = "none")+
-      geom_text(data = centroids, aes(label = metadata), size = 3, color = "black", hjust = 0.5, vjust = 0.5)
+      geom_text(data = centroids, aes(label = metadata), size = 2.2, color = "grey50", hjust = 0.6, vjust = 0.6)
   }
   
   if(label_is_continuous){return(
@@ -671,7 +671,7 @@ plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/
       scale_color_viridis() +
       ggtitle(title) +
       theme_minimal() +
-      theme(axis.line = element_line(colour = "grey50", linewidth = 0.9),
+      theme(axis.line = element_line(colour = "grey30", linewidth = 0.4),
             panel.border = element_blank(),  #element_rect(colour = "grey90", fill=NA, size=0.7),
             panel.grid.major = element_blank(),  #element_line(color = "grey96"),
             panel.grid.minor = element_blank(),
@@ -679,7 +679,7 @@ plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/
             legend.position = "none")
   )}
   
-  if(!label_is_continuous){
+  if(!label_is_continuous && show_density){
     xdens <- axis_canvas(p, axis = "x")+
       geom_density(df, mapping = aes(x = UMAP1, fill = metadata_vector), color= 'grey55', alpha = 0.50, size = 0.2) +
       theme(legend.position = "none")
@@ -693,9 +693,10 @@ plot_UMAP <- function(matrix, metadata_vector, title = 'UMAP', aspect_ratio = 1/
     p1 <- insert_xaxis_grob(p, xdens, grid::unit(.2, "null"), position = "top")
     p2 <- insert_yaxis_grob(p1, ydens, grid::unit(.2, "null"), position = "right")
     pList <- ggdraw(p2)
+    p <- pList
   }
   
-  return(pList)
+  return(p)
 }
 
 
