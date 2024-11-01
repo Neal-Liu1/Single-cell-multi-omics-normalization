@@ -429,12 +429,14 @@ setMethod(
     obj <- ComputeMultipleSilhouette(obj, variables = variables)
     message(paste0('Silhouette finished in ', 
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
-                   ' seconds \U0001F92F\nStarting ARI calculation \U0001F92F'))
+                   ' seconds \U0001F92F'))
+    "
     start <- Sys.time()
-    obj <- ComputeARIs(obj, variables, method = 'graph', clust_resolution = ari_resolution)
+    obj <- ComputeARIs(obj, labels = variables, method = 'graph', clust_resolution = ari_resolution)
     message(paste0('ARI finished in ',
                    round(difftime(Sys.time(),start, units = 'secs'), 2),
                    ' seconds \U0001F92F'))
+    "
     return(obj)
   })
 
@@ -501,6 +503,7 @@ setMethod('ComputeARIs',
               message(paste0("Performing graph partitioning with resolution", clust_resolution))
               clusters <- lapply(neighbours, function(x){
                 Seurat::FindClusters(x, resolution = clust_resolution, algorithm = 3)})
+              message("Computing ARIs")
               for(label in labels){
               label_name <- labels
               labels <- obj@Metadata[[labels]]
@@ -771,7 +774,7 @@ setMethod('FindNCG',
             corr_data <- do.call(cbind, corr_data) %>% as.data.frame()
             rownames(corr_data) <- rownames(object[['RNA']])
             ranks <- apply(corr_data, 2, rank) %>% as.data.frame()
-            ranks$avg_expr <- rowMeans2(data)
+            ranks$avg_expr <- Rfast::rowmeans(data)
             prod_ranks <- apply(ranks, 1, prod)
             final_gene_ranks <- prod_ranks[base::order(-prod_ranks)]
             message('FindNCG Completed!')
@@ -800,7 +803,7 @@ setMethod('FindNCG',
             if(apply_log){data <- log2_sparse(object@Raw_data, pseudocount = 1)}
             else{data <- object@Raw_data}
             
-            data <- data[,sample_] # %>% as.matrix()
+            data <- data[,sample_] %>% as.matrix()
             metadata <- object@Metadata[sample_,]
             
             message('Calculating Spearman correlation for continuous variables & F score for categorical variables')
@@ -818,9 +821,8 @@ setMethod('FindNCG',
             }
             corr_data <- do.call(cbind, corr_data) %>% as.data.frame()
             rownames(corr_data) <- rownames(object@Raw_data)
-            corr_data$avg_expr <- rowMeans2(data)
             ranks <- apply(corr_data, 2, rank) %>% as.data.frame()
-            ranks$avg_expr <- rowMeans2(data)
+            ranks$avg_expr <- Rfast::rowmeans(data)
             prod_ranks <- apply(ranks, 1, prod)
             final_gene_ranks <- prod_ranks[base::order(-prod_ranks)]
             message('FindNCG Completed!')
