@@ -465,6 +465,7 @@ setGeneric('ComputeARIs',
                     distance_type  = 'euclidean', 
                     sample_fraction = 1, 
                     num_cross_validation = 1,
+                    neighbours = NULL,
                     ...)
              {standardGeneric('ComputeARIs')})
 
@@ -492,17 +493,29 @@ setMethod('ComputeARIs',
                    distance_type,
                    sample_fraction,
                    num_cross_validation,
+                   neighbours,
                    ...){
             if(!method %in% c('graph', 'hclust'))
               {stop("Please only specify 'graph' or 'hclust' for the method")}
             
             if(method == 'graph'){
               message("Using 'graph' method. Using Seurat FindNeighbors to construct snn graphs.")
+              if(is.null(neighbours)){
               neighbours <- lapply(obj@PCs, function(x){
-                Seurat::FindNeighbors(x)[['snn']]})
-              message(paste0("Performing graph partitioning with resolution", clust_resolution))
-              clusters <- lapply(neighbours, function(x){
-                Seurat::FindClusters(x, resolution = clust_resolution, algorithm = 3)})
+                Seurat::FindNeighbors(x)[['snn']]})}
+              message(paste0("Performing graph partitioning."))
+              
+              if(length(clust_resolution) == length(neighbours)){
+              clusters <- lapply(1:length(neighbours), function(i){
+                Seurat::FindClusters(neighbours[[i]], resolution = clust_resolution[[i]], algorithm = 3)})
+              names(clusters) <- names(neighbours)
+              }
+              else if(length(clust_resolution) == 1){
+                clusters <- lapply(neighbours, function(x){
+                  Seurat::FindClusters(x, resolution = clust_resolution, algorithm = 3)})
+              }
+              else(stop('clust_resolution must be a vector of same length as neighbours or a single number.'))
+              
               message("Computing ARIs")
               for(label in labels){
               label_name <- labels
@@ -976,6 +989,7 @@ setGeneric(
            plot_type = 'violin',
            title = 'Silhouette Plot',
            aspect_ratio = 1.3,
+           weighted = T,
            ...){
     standardGeneric('PlotMultipleSilhouette')})
 
@@ -990,10 +1004,17 @@ setMethod(
     plot_type,
     title,
     aspect_ratio,
+    weighted = T,
     ...){
     if(variable %in% colnames(obj@Metadata)){
-      merged_data <- do.call(rbind, obj@Silhouette[[variable]])
-      merged_data$method <- rep(names(obj@Silhouette[[variable]]),
+      silhouettes <- obj@Silhouette[[variable]]
+      
+      if(weighted)
+      {silhouettes <- lapply(silhouettes, function(x){
+          x$silhouette_score <- (x$silhouette_score * x$n) / sum(x$n); x})}
+      
+      merged_data <- do.call(rbind, silhouettes)
+      merged_data$method <- rep(names(silhouettes),
                                 each = length(unique(merged_data$labels)))}
     
     else{stop("Silhouette scores for this variable hasn't been computed yet.")}
