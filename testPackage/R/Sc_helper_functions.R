@@ -1383,7 +1383,7 @@ setMethod(
            ngenes_per_batch, 
            n_not_detected_batch_to_permit = 1,
            ...){
-    
+    require('tidyr')
     message('Splitting data by batch \U0001F92F')
     batch_data_list <- lapply(
       unique(obj@Metadata[[batch_variable]]),
