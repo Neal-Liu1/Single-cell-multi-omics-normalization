@@ -1,0 +1,280 @@
+---
+title: "NK cells"
+author: "Neal Liu"
+date: "2024-12-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries & our own helper functions
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
+source('testPackage/R/Sc_helper_functions.R')
+
+```
+
+```{r}
+nk_data <- qs::qread('/vast/scratch/users/liu.ne/Seurat_3Assays_Genes24K_Cells140K_SingletHTO_CorrectDonors (1).qs')
+
+```
+
+
+```{r}
+nk_data$log2_rna_libsize <- log2(colSums(nk_data@assays$RNA@counts))
+nk_data$log2_adt_libsize <- log2(colSums(nk_data@assays$ADT@counts))
+
+rna_metrics <- BenchmarkMetrics(
+  Algorithm = c('Raw_counts', 'Seurat_LogNormalize', 'SCTransform','Seurat_rPCA',
+                'Harmony_LogNormalize','fastMNN', 'totalVI', 
+                'fastRUVIII_supervised', 'fastRUVIII_unsupervised'), 
+  Raw_data = nk_data@assays$RNA@counts, 
+  Metadata = nk_data@meta.data)
+
+#rownames(rna_metrics@Raw_data) <- dimnames(nk_data@assays$RNA)[[1]]
+#colnames(rna_metrics@Raw_data) <- dimnames(nk_data@assays$RNA)[[2]]
+
+adt_metrics <- BenchmarkMetrics(
+  Algorithm = c('Raw_counts', 'ADTnorm', 'CLR', 'DSB', 'Harmony_CLR', 
+                'totalVI', 'fastRUVIII_supervised', 'fastRUVIII_unsupervised'),
+  Raw_data = nk_data@assays$ADT@counts[
+    edgeR::filterByExpr(nk_data@assays$ADT@counts, 
+                        min.count = 1, min.total.count = 50),
+    ], 
+  Metadata = nk_data@meta.data)
+
+
+```
+
+
+```{r}
+rna_metrics <- FilterLowlyExpressedGenes(rna_metrics, 'capture', 12000, n_not_detected_batch_to_permit = 1)
+
+# totalVI python conversion shenanigans
+test <- SingleCellExperiment::SingleCellExperiment(assays = list(ADT = adt_metrics@Raw_data),
+                             colData = nk_data@meta.data)
+test2 <- SingleCellExperiment::SingleCellExperiment(assays = list(RNA = rna_metrics@Raw_data),
+                             colData = nk_data@meta.data)
+# Write H5
+zellkonverter::writeH5AD(test, file = '/vast/scratch/users/liu.ne/ADT_nk.h5ad')
+zellkonverter::writeH5AD(test2, file = '/vast/scratch/users/liu.ne/RNA_nk.h5ad')
+rm(test)
+rm(test2)
+
+# Run all other methods for RNA and ADT
+rna_metrics <- NormalizeRNA(
+  rna_metrics, batch_variable = 'capture', num_pcs = 30)
+
+adt_metrics <- NormalizeADT(
+  adt_metrics, batch_variable = 'capture', num_pcs = 13)
+
+```
+
+
+```{r}
+totalVI_adt <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_adt_nk.h5ad')
+totalVI_rna <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_rna_nk.h5ad')
+rna_metrics <- add_totalVI(rna_metrics, totalVI_rna, assay_name = 'rna_normalized', pcs = 30)
+adt_metrics <- add_totalVI(adt_metrics, totalVI_adt, assay_name = 'adt_normalized', pcs = 13)
+
+
+```
+
+```{r}
+ncgs <- FindNCG(
+  rna_metrics, 
+  unwanted_variables = c('capture', 'log2_rna_libsize'), 
+  bio_variables = c('Day_Treatment'), 
+  no.ncg = 300, 
+  sample_fraction = 0.1)
+
+prpc_supervised <- CreatePRPC(
+  rna_metrics@Raw_data, c('Day_Treatment'), 
+  metadata = rna_metrics@Metadata,
+  c('capture', 'log2_rna_libsize'), 
+  separate_bins_by_biology = c(T, T),
+  group_by_vars = c(NA,'capture'))
+
+rna_metrics <- RunRUVIII(
+  rna_metrics, 
+  prpc_supervised, 
+  rownames(rna_metrics@Raw_data) %in% ncgs, 
+  k=1, 
+  name = 'fastRUVIII_supervised')
+
+prpc_adt_supervised <- CreatePRPC(
+  adt_metrics@Raw_data, c('Day_Treatment'), 
+  metadata = rna_metrics@Metadata,
+  c('capture', 'log2_adt_libsize'), 
+  separate_bins_by_biology = c(T, T),
+  group_by_vars = c(NA,'capture'))
+
+adt_metrics <- RunRUVIII(
+  adt_metrics, 
+  prpc_adt_supervised, 
+  rep(T,nrow(adt_metrics@Raw_data)), 
+  k=2, 
+  name = 'fastRUVIII_supervised',
+  pcs = 13)
+
+
+```
+
+
+# Plot metrics
+```{r, fig.height= 6, fig.width= 10}
+p1 <- PlotMultipleCorrelations(rna_metrics, c('capture','log2_rna_libsize', 'Day_Treatment'), titles = c('Batch', 'Libsize', 'Day_Treatment'))
+p2 <- PlotMultipleCorrelations(adt_metrics, c('capture','log2_adt_libsize', 'Day_Treatment'), titles = c('Batch', 'Libsize', 'Day_Treatment'))
+gridExtra::grid.arrange(p1,p2, nrow = 2)
+```
+
+
+```{r}
+rna_metrics <- ComputeUMAP(rna_metrics, method = 'uwot')
+adt_metrics <- ComputeUMAP(adt_metrics, method = 'uwot')
+
+```
+```{r}
+plot_UMAP(rna_metrics@UMAPs$fastRUVIII_supervised, rna_metrics@Metadata$Day, run_umap = F)
+plot_UMAP(adt_metrics@UMAPs$fastRUVIII_supervised, rna_metrics@Metadata$Day, run_umap = F)
+
+plot_UMAP(adt_metrics@UMAPs$CLR, rna_metrics@Metadata$Day_Treatment, run_umap = F)
+plot_UMAP(adt_metrics@UMAPs$CLR, rna_metrics@Metadata$capture, run_umap = F)
+plot_UMAP(adt_metrics@UMAPs$Raw_counts, rna_metrics@Metadata$Day_Treatment, run_umap = F)
+plot_UMAP(rna_metrics@UMAPs$Raw_counts, rna_metrics@Metadata$Day_Treatment, run_umap = F)
+
+```
+
+
+```{r}
+test <- adt_metrics@Raw_data[,1:2000] %>% as.matrix() %>% t()
+#heatmap(test[1:20,1:20], Rowv = NA)
+#svd <- BiocSingular::runSVD(test, 20, center = F, BSPARAM = BiocSingular::bsparam())
+#View(svd$u %*% diag(svd$d) %*% t(svd$v) %>% round(digits = 0))
+#diag(x= svd$d[1:10])
+
+test_metadata <- adt_metrics@Metadata[1:2000,]
+
+# rownames(adt_metrics@Raw_data) %in% ncgs
+
+test_nb <- ruvIIInb::fastruvIII.nb(
+  t(test), M = ruv::replicate.matrix(test_metadata$Treatment), 
+  ctl = rep(T, ncol(test)),
+  k= 2)
+
+test_fastruv <- Sparse_RUV_III(
+  log(test+1), 
+  Yrep = log(test+1), 
+  M = ruv::replicate.matrix(test_metadata$Treatment), 
+  ctl = rep(T, ncol(test)), 
+  k = 2)
+
+View(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
+View((exp(test_fastruv)-1) %>% round(digits = 0))
+
+frobenius_distance(test_fastruv, t(assay(test_nb,'logPAC')))
+frobenius_distance((exp(test_fastruv)-1) %>% round(digits = 0), as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
+
+View(colMeans((exp(test_fastruv)-1) %>% round(digits = 0)))
+View(colMeans(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t()))
+hist(colMeans((exp(test_fastruv)-1) %>% round(digits = 0)) - colMeans(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t()))
+
+```
+
+
+
+```{r}
+# svd the matrix
+# split non-random error and e
+# exp non-random error over e
+# round
+
+frobenius_distance <- function(A, B) {
+  sqrt(sum((A - B)^2))
+}
+
+
+#' Back-transforms normalized logcounts into counts
+#' @description Given a matrix, estimate the biology and random error and back transforms the 
+#' log-counts into counts, estimating each gene's smearing factor using the random error.
+#' 
+#' @param x A matrix with samples as rows and features as columns
+#' @param l Number of PCs to estimate as biology. The rest will be used to estimate the random error.
+#' @param pcs Total number of PCs to compute
+#' @return A list with the transformed data, a vector of smearing factors as floats, the estimated biology 
+#' matrix in log-space, and the estimated random error matrix in log-space.
+#' @export
+
+smearing_transformation <- function(x, l = 20, pcs = 100){
+  x <- as(x, 'dgCMatrix')
+  if(pcs > ncol(x)){
+    pcs <- ncol(x)-1
+    message(paste0('You requested more PCs than there are features. Computing ', pcs,' PCs instead.'))
+  }
+  svd <- BiocSingular::runSVD(
+    x, k = pcs, center = F, scale = F, 
+    BSPARAM = BiocSingular::bsparam())
+  
+  bio_singular_values <- diag(x=c(svd$d[1:l], rep(0, pcs-l)))
+  e_singular_values <- diag(x=c(rep(0, l), svd$d[(l+1):pcs]))
+  
+  b_matrix <- svd$u %*% bio_singular_values %*% t(svd$v)
+  e_matrix <- svd$u %*% e_singular_values %*% t(svd$v)
+  
+  # This needs to be changed based on if your original data is log base 2 or e
+  e <- colMeans(exp(e_matrix))
+  result <- round(sweep(exp(b_matrix), 2, e, FUN = "*")-1, digits = 0)
+  
+  return(list(
+    adjusted = result, 
+    smearing_factors = e, 
+    biology = b_matrix, 
+    errors = e_matrix))
+  
+}
+
+test_smear <- smearing_transformation(x=test_fastruv, l = 68, pcs = 69, center = F)
+View(test_smear$adjusted)
+View(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
+View((exp(test_fastruv)-1) %>% round(digits = 0))
+
+frobenius_distance((exp(test_fastruv)-1) %>% round(digits = 0), as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
+frobenius_distance(test_smear$adjusted, as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
+
+hist(colMeans(test_smear$adjusted) - colMeans(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t()))
+
+plot(colSums(exp(t(test_nb@assays@data$logPAC))-1),colSums(test_smear$adjusted))
+plot(rowSums(exp(t(test_nb@assays@data$logPAC))-1),rowSums(test_smear$adjusted))
+
+
+plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,3], test_smear$adjusted[,3])
+plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,3], test_smear$adjusted[,3])
+plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,3], exp(test_fastruv[,3]))
+```
+
+
+```{r}
+#View(test_result[[1]])
+#View(test)
+hist(test_smear$errors[,1])
+hist(test_smear$errors[,2])
+hist(test_smear$errors[,3])
+hist(test_smear$errors[,4])
+
+```
+
+
+
+
+```{r}
+# save.image(file= '/vast/scratch/users/liu.ne/nk_backup.RData')
+# load('/vast/scratch/users/liu.ne/nk_backup.RData')
+
+```
+
