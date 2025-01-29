@@ -14,6 +14,7 @@ Load libraries & our own helper functions
 ```{r}
 library(Seurat)
 library(ggplot2)
+library(cowplot)
 library(dplyr)
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
 source('testPackage/R/Sc_helper_functions.R')
@@ -140,6 +141,7 @@ rna_metrics <- ComputeUMAP(rna_metrics, method = 'uwot')
 adt_metrics <- ComputeUMAP(adt_metrics, method = 'uwot')
 
 ```
+
 ```{r}
 plot_UMAP(rna_metrics@UMAPs$fastRUVIII_supervised, rna_metrics@Metadata$Day, run_umap = F)
 plot_UMAP(adt_metrics@UMAPs$fastRUVIII_supervised, rna_metrics@Metadata$Day, run_umap = F)
@@ -190,17 +192,13 @@ hist(colMeans((exp(test_fastruv)-1) %>% round(digits = 0)) - colMeans(as.matrix(
 
 
 ```{r}
-# svd the matrix
-# split non-random error and e
-# exp non-random error over e
-# round
 
 frobenius_distance <- function(A, B) {
   sqrt(sum((A - B)^2))
 }
 
 
-#' Back-transforms normalized logcounts into counts
+#' Back-transforms logcounts into counts
 #' @description Given a matrix, estimate the biology and random error and back transforms the 
 #' log-counts into counts, estimating each gene's smearing factor using the random error.
 #' 
@@ -236,10 +234,9 @@ smearing_transformation <- function(x, l = 20, pcs = 100){
     smearing_factors = e, 
     biology = b_matrix, 
     errors = e_matrix))
-  
 }
 
-test_smear <- smearing_transformation(x=test_fastruv, l = 68, pcs = 69, center = F)
+test_smear <- smearing_transformation(x=test_fastruv, l = 68, pcs = 69)
 View(test_smear$adjusted)
 View(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
 View((exp(test_fastruv)-1) %>% round(digits = 0))
@@ -255,7 +252,10 @@ plot(rowSums(exp(t(test_nb@assays@data$logPAC))-1),rowSums(test_smear$adjusted))
 
 plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,3], test_smear$adjusted[,3])
 plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,3], test_smear$adjusted[,3])
-plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,3], exp(test_fastruv[,3]))
+plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,3], round((exp(test_fastruv[,3])-1), digits = 0))
+plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,5], exp(test_fastruv[,5]))
+
+
 ```
 
 
