@@ -9,13 +9,15 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Load libraries & our own helper functions
-
+# Load libraries & our own helper functions
 ```{r}
 library(Seurat)
 library(ggplot2)
 library(cowplot)
 library(dplyr)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(edgeR)
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
 source('testPackage/R/Sc_helper_functions.R')
 
@@ -46,7 +48,7 @@ adt_metrics <- BenchmarkMetrics(
                 'totalVI', 'fastRUVIII_supervised', 'fastRUVIII_unsupervised'),
   Raw_data = nk_data@assays$ADT@counts[
     edgeR::filterByExpr(nk_data@assays$ADT@counts, 
-                        min.count = 1, min.total.count = 50),
+                        min.count = 2, min.total.count = 50),
     ], 
   Metadata = nk_data@meta.data)
 
@@ -55,7 +57,7 @@ adt_metrics <- BenchmarkMetrics(
 
 
 ```{r}
-rna_metrics <- FilterLowlyExpressedGenes(rna_metrics, 'capture', 12000, n_not_detected_batch_to_permit = 1)
+rna_metrics <- FilterLowlyExpressedGenes(rna_metrics, 'capture', 12000, n_not_detected_batch_to_permit = 0)
 
 # totalVI python conversion shenanigans
 test <- SingleCellExperiment::SingleCellExperiment(assays = list(ADT = adt_metrics@Raw_data),
@@ -92,7 +94,7 @@ ncgs <- FindNCG(
   rna_metrics, 
   unwanted_variables = c('capture', 'log2_rna_libsize'), 
   bio_variables = c('Day_Treatment'), 
-  no.ncg = 300, 
+  no.ncg = 500, 
   sample_fraction = 0.1)
 
 prpc_supervised <- CreatePRPC(
@@ -135,7 +137,7 @@ p2 <- PlotMultipleCorrelations(adt_metrics, c('capture','log2_adt_libsize', 'Day
 gridExtra::grid.arrange(p1,p2, nrow = 2)
 ```
 
-
+# Plot UMAPs
 ```{r}
 rna_metrics <- ComputeUMAP(rna_metrics, method = 'uwot')
 adt_metrics <- ComputeUMAP(adt_metrics, method = 'uwot')
@@ -210,7 +212,7 @@ frobenius_distance <- function(A, B) {
 #' @export
 
 smearing_transformation <- function(x, l = 20, pcs = 100){
-  x <- as(x, 'dgCMatrix')
+  x <- as(x, "CsparseMatrix")
   if(pcs > ncol(x)){
     pcs <- ncol(x)-1
     message(paste0('You requested more PCs than there are features. Computing ', pcs,' PCs instead.'))
@@ -226,8 +228,8 @@ smearing_transformation <- function(x, l = 20, pcs = 100){
   e_matrix <- svd$u %*% e_singular_values %*% t(svd$v)
   
   # This needs to be changed based on if your original data is log base 2 or e
-  e <- colMeans(exp(e_matrix))
-  result <- round(sweep(exp(b_matrix), 2, e, FUN = "*")-1, digits = 0)
+  e <- colMeans(2^(e_matrix))
+  result <- round(sweep(2^(b_matrix), 2, e, FUN = "*")-1, digits = 0)
   
   return(list(
     adjusted = result, 
@@ -270,6 +272,137 @@ hist(test_smear$errors[,4])
 ```
 
 
+
+# Testing DE analysis
+```{r}
+# Pseudobulk per day_treatment per donor
+raw_pseudobulk <- rowsum(
+  t(rna_metrics@Raw_data), 
+  group = paste0(
+    rna_metrics@Metadata$Day_Treatment, 
+    rna_metrics@Metadata$genetic_donor)) %>% t()
+
+group <- substr(colnames(raw_pseudobulk), 1, nchar(colnames(raw_pseudobulk)) - 7)
+
+dge <- edgeR::DGEList(
+  counts = raw_pseudobulk, 
+  group = group)
+
+keep <- filterByExpr(dge, group = group)
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+dge <- calcNormFactors(dge)
+design <- model.matrix(~ group)
+dge <- estimateDisp(dge, design)
+
+# Fit the GLM
+fit <- glmFit(dge, design)
+
+# Perform likelihood ratio test
+lrt <- glmLRT(fit)
+
+# Get top differentially expressed genes
+topGenes <- topTags(lrt, n = Inf)
+
+# View results
+head(topGenes$table)
+
+
+```
+
+
+```{r, fig.height= 7}
+plotMD(lrt)
+
+results <- topGenes$table
+ggplot(results, aes(x = logFC, y = -log10(PValue))) +
+  geom_point() +
+  theme_minimal()
+
+```
+
+
+# GO enrichment
+```{r}
+hs <- org.Hs.eg.db
+top_genes <- rownames(results)[1:50]
+top_genes <- select(hs, 
+       keys = top_genes,
+       columns = c("ENTREZID", "SYMBOL"),
+       keytype = "SYMBOL")
+rm(hs)
+
+plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID')
+
+```
+
+# testing RUV adjusted data
+```{r}
+# Pseudobulk per day_treatment per donor
+ruv_smearing <- smearing_transformation(
+  rna_metrics@Adj_data$fastRUVIII_supervised, 
+  l = 35, pcs = 70)
+
+ruv_smearing <- as(ruv_smearing$adjusted, "CsparseMatrix")
+```
+
+```{r}
+ruv_smearing@x[ruv_smearing@x < 0] <- 0
+ruv_smearing_pseudobulk <- rowsum(
+  t(ruv_smearing), 
+  group = paste0(
+    rna_metrics@Metadata$Day_Treatment, 
+    rna_metrics@Metadata$genetic_donor)) %>% t()
+
+group <- substr(colnames(ruv_smearing_pseudobulk), 1, nchar(colnames(ruv_smearing_pseudobulk)) - 7)
+
+ruv_dge <- edgeR::DGEList(
+  counts = ruv_smearing_pseudobulk, 
+  group = group)
+
+keep <- filterByExpr(ruv_dge, group = group)
+ruv_dge <- ruv_dge[keep, , keep.lib.sizes = FALSE]
+ruv_dge <- calcNormFactors(ruv_dge)
+design <- model.matrix(~ group)
+ruv_dge <- estimateDisp(ruv_dge, design)
+
+# Fit the GLM
+ruv_fit <- glmFit(ruv_dge, design)
+
+# Perform likelihood ratio test
+ruv_lrt <- glmLRT(ruv_fit)
+
+# Get top differentially expressed genes
+ruv_topGenes <- topTags(ruv_lrt, n = Inf)
+
+# View results
+head(ruv_topGenes$table)
+```
+
+```{r, fig.height= 7}
+plotMD(ruv_lrt)
+
+ruv_results <- ruv_topGenes$table
+ggplot(ruv_results, aes(x = logFC, y = -log10(PValue))) +
+  geom_point() +
+  theme_minimal()
+
+```
+
+```{r, fig.height= 4.5, fig.width= 14}
+hs <- org.Hs.eg.db
+ruv_top_genes <- rownames(ruv_results)[1:50]
+ruv_top_genes <- select(hs, 
+       keys = ruv_top_genes,
+       columns = c("ENTREZID", "SYMBOL"),
+       keytype = "SYMBOL")
+rm(hs)
+
+p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID') + ggtitle('RUV Smearing')
+p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID') + ggtitle('Raw counts')
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+```
 
 
 ```{r}
