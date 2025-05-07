@@ -159,26 +159,26 @@ plot_UMAP(rna_metrics@UMAPs$Raw_counts, rna_metrics@Metadata$Day_Treatment, run_
 
 
 ```{r}
-test <- rna_metrics@Raw_data[,1:5000] %>% as.matrix() %>% t()
+test <- rna_metrics@Raw_data[,1:20000] %>% as.matrix() %>% t()
 #heatmap(test[1:20,1:20], Rowv = NA)
 #svd <- BiocSingular::runSVD(test, 20, center = F, BSPARAM = BiocSingular::bsparam())
 #View(svd$u %*% diag(svd$d) %*% t(svd$v) %>% round(digits = 0))
 #diag(x= svd$d[1:10])
 
-test_metadata <- adt_metrics@Metadata[1:5000,]
+test_metadata <- adt_metrics@Metadata[1:20000,]
 
 # rownames(adt_metrics@Raw_data) %in% ncgs
 
 test_nb <- ruvIIInb::fastruvIII.nb(
   t(test), M = ruv::replicate.matrix(test_metadata$Treatment), 
-  ctl = rep(T, ncol(test)),
+  ctl = colnames(test) %in% ncgs,
   k= 2)
 
 test_fastruv <- Sparse_RUV_III(
   log2(test+1), 
   Yrep = log2(test+1), 
   M = ruv::replicate.matrix(test_metadata$Treatment), 
-  ctl = rep(T, ncol(test)), 
+  ctl = colnames(test) %in% ncgs, 
   k = 2)
 
 View(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
@@ -211,10 +211,7 @@ smearing_transformation <- function(x, l = 30){
     x, k = l, center = F, scale = F, 
     BSPARAM = BiocSingular::bsparam())
   
-  #bio_singular_values <- diag(x=c(svd$d[1:l], rep(0, pcs-l)))
-  #e_singular_values <- diag(x=c(rep(0, l), svd$d[(l+1):pcs]))
-  
-  b_matrix <- svd$u %*% diag(svd$d) %*% t(svd$v)
+  b_matrix <- svd$u %*% diag(svd$d[1:l]) %*% t(svd$v)
   e_matrix <- x - b_matrix
   
   # This needs to be changed based on if your original data is log base 2 or e
@@ -228,7 +225,7 @@ smearing_transformation <- function(x, l = 30){
     errors = e_matrix))
 }
 
-test_smear <- smearing_transformation(x=test_fastruv, l = 50)
+test_smear <- smearing_transformation(x=test_fastruv, l = 40)
 
 #frobenius_distance((exp(test_fastruv)-1) %>% round(digits = 0), as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
 #frobenius_distance(test_smear$adjusted, as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
@@ -316,8 +313,8 @@ ggplot(results, aes(x = logFC, y = -log10(PValue))) +
 # GO enrichment
 ```{r}
 hs <- org.Hs.eg.db
-top_genes <- rownames(results)[1:50]
-top_genes <- select(hs, 
+top_genes <- rownames(results)[1:100]
+top_genes <- AnnotationDbi::select(hs, 
        keys = top_genes,
        columns = c("ENTREZID", "SYMBOL"),
        keytype = "SYMBOL")
@@ -335,6 +332,9 @@ ruv_smearing <- smearing_transformation(
   l = 40)
 
 ruv_smearing <- as(ruv_smearing$adjusted, "CsparseMatrix")
+
+
+
 ```
 
 ```{r}
@@ -380,10 +380,53 @@ ggplot(ruv_results, aes(x = logFC, y = -log10(PValue))) +
 
 ```
 
+# Also testing RUVIII-nb
+```{r}
+rna_ruvIIInb <- ruvIIInb::fastruvIII.nb(
+  as.matrix(t(rna_metrics@Raw_data)), 
+  M = ruv::replicate.matrix(rna_metrics@Metadata$Day_Treatment), 
+  ctl = rownames(rna_metrics@Raw_data) %in% ncgs,
+  k= 1, 
+  batch = as.numeric(rna_metrics@Metadata$capture))
+
+# as.matrix(exp(assay(test_nb,'logPAC'))-1)
+
+ruv_smearing_pseudobulk <- rowsum(
+  t(ruv_smearing), 
+  group = paste0(
+    rna_metrics@Metadata$Day_Treatment, 
+    rna_metrics@Metadata$genetic_donor)) %>% t()
+
+group <- substr(colnames(ruv_smearing_pseudobulk), 1, nchar(colnames(ruv_smearing_pseudobulk)) - 7)
+
+ruv_dge <- edgeR::DGEList(
+  counts = ruv_smearing_pseudobulk, 
+  group = group)
+
+keep <- filterByExpr(ruv_dge, group = group)
+ruv_dge <- ruv_dge[keep, , keep.lib.sizes = FALSE]
+ruv_dge <- calcNormFactors(ruv_dge)
+design <- model.matrix(~ group)
+ruv_dge <- estimateDisp(ruv_dge, design)
+
+# Fit the GLM
+ruv_fit <- glmFit(ruv_dge, design)
+
+# Perform likelihood ratio test
+ruv_lrt <- glmLRT(ruv_fit)
+
+# Get top differentially expressed genes
+ruv_topGenes <- topTags(ruv_lrt, n = Inf)
+
+# View results
+head(ruv_topGenes$table)
+```
+
+
 ```{r, fig.height= 4.5, fig.width= 14}
 hs <- org.Hs.eg.db
-ruv_top_genes <- rownames(ruv_results)[1:50]
-ruv_top_genes <- select(hs, 
+ruv_top_genes <- rownames(ruv_results)[1:100]
+ruv_top_genes <- AnnotationDbi::select(hs, 
        keys = ruv_top_genes,
        columns = c("ENTREZID", "SYMBOL"),
        keytype = "SYMBOL")
@@ -396,6 +439,7 @@ gridExtra::grid.arrange(p1, p2, ncol = 2)
 
 ```
 
+
 ```{r, fig.height= 4.5, fig.width= 14}
 p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'CC') + ggtitle('RUV Smearing')
 p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'CC') + ggtitle('Raw counts')
@@ -404,6 +448,7 @@ gridExtra::grid.arrange(p1, p2, ncol = 2)
 
 ```
 
+
 ```{r, fig.height= 4.5, fig.width= 14}
 p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'MF') + ggtitle('RUV Smearing')
 p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'MF') + ggtitle('Raw counts')
@@ -411,6 +456,7 @@ p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology
 gridExtra::grid.arrange(p1, p2, ncol = 2)
 
 ```
+
 
 ```{r}
 smearing_transform_pcs <- run_PCA(ruv_smearing, pcs = 30)
@@ -436,6 +482,7 @@ plot_UMAP(
 
 ```
 
+
 ```{r, fig.height= 6, fig.width= 10}
 test <- BenchmarkMetrics(
   c('RUV_logcounts', 'RUV_smearing_transformed', 'Raw_counts'), 
@@ -449,6 +496,112 @@ test@PCs$RUV_smearing_transformed <- smearing_transform_pcs$u
 PlotMultipleCorrelations(test, c('capture','log2_rna_libsize', 'Day_Treatment'), titles = c('Batch', 'Libsize', 'Day_Treatment'))
 
 ```
+
+
+```{r}
+#dummies <- fastDummies::dummy_cols(rna_metrics@Metadata$Day_Treatment)
+
+wilcox_tests <- list()
+
+for(group in unique(rna_metrics@Metadata$Treatment)){results <- wilcoxon_test(
+    as.matrix(rna_metrics@Raw_data), 
+    variable = ifelse(rna_metrics@Metadata$Treatment == group, 'a', 'b'))
+  wilcox_tests$group <- results}
+
+
+hs <- org.Hs.eg.db
+ruv_top_genes <- rownames(ruv_results)[1:100]
+ruv_top_genes <- AnnotationDbi::select(hs, 
+       keys = ruv_top_genes,
+       columns = c("ENTREZID", "SYMBOL"),
+       keytype = "SYMBOL")
+rm(hs)
+
+p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID') + ggtitle('RUV Smearing')
+p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID') + ggtitle('Raw counts')
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+```
+
+
+```{r, fig.height= 4.5, fig.width= 14}
+p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'CC') + ggtitle('RUV Smearing')
+p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'CC') + ggtitle('Raw counts')
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+```
+
+
+```{r, fig.height= 4.5, fig.width= 14}
+p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'MF') + ggtitle('RUV Smearing')
+p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'MF') + ggtitle('Raw counts')
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+```
+
+
+
+
+```{r}
+ScheirerRayHare_test <- function(data, variable_1, variable_2, is.log = TRUE, pval_adj_method = 'BH', sort_by = NULL) {
+  # Non-parametric version of the two-way ANOVA. Requires the rcompanion package.
+  
+  if (!requireNamespace("rcompanion", quietly = TRUE)) {
+    stop("The rcompanion package is needed for this function to work. Please install it.", call. = FALSE)
+  }
+  
+  if (!is.log) {
+    data <- log2(data + 1)
+  }
+  
+  means <- rowMeans(data)
+  results <- data.frame(
+    Var1_chisq = numeric(),
+    Var1_PValue = numeric(),
+    Var1_Adj_PValue = numeric(),
+    Var2_chisq = numeric(),
+    Var2_PValue = numeric(),
+    Var2_Adj_PValue = numeric(),
+    Interaction_chisq = numeric(),
+    Interaction_PValue = numeric(),
+    Interaction_Adj_PValue = numeric(),
+    Mean = numeric()
+  )
+  
+  if (!is.null(sort_by)) {
+    if (!(sort_by %in% colnames(results))) {
+      stop("The column you want to sort by doesn't exist. You can choose from: 'Var1_chisq', 'Var1_PValue', 'Var1_Adj_PValue', 'Var2_chisq', 'Var2_PValue', 'Var2_Adj_PValue', 'Interaction_chisq', 'Interaction_PValue', 'Interaction_Adj_PValue', 'Mean'.")
+    }}
+  
+  for (x in 1:nrow(data)) {
+    ranks <- rank(as.numeric(data[x, ]))
+    data_frame <- data.frame(ranks = ranks, variable_1 = variable_1, variable_2 = variable_2)
+    model <- rcompanion::scheirerRayHare(ranks ~ variable_1 * variable_2, data = data_frame)
+    
+    results[x, "Var1_chisq"] <- round(model$H[1], digits = 4)
+    results[x, "Var1_PValue"] <- model$p.value[1]
+    results[x, "Var2_chisq"] <- round(model$H[2], digits = 4)
+    results[x, "Var2_PValue"] <- model$p.value[2]
+    results[x, "Interaction_chisq"] <- round(model$H[3], digits = 4)
+    results[x, "Interaction_PValue"] <- model$p.value[3]
+    results[x, "Mean"] <- round(means[x], digits = 2)
+  }
+  
+  results$Var1_Adj_PValue <- p.adjust(results$Var1_PValue, method = pval_adj_method)
+  results$Var2_Adj_PValue <- p.adjust(results$Var2_PValue, method = pval_adj_method)
+  results$Interaction_Adj_PValue <- p.adjust(results$Interaction_PValue, method = pval_adj_method)
+  rownames(results) <- rownames(data)
+  
+  results <- results[order(results[[sort_by]]), ]
+  return(results)
+}
+
+
+```
+
 
 
 
