@@ -1,0 +1,305 @@
+---
+title: "Influenza CITEseq"
+author: "Neal Liu"
+date: "2024-10-29"
+output: html_document
+dev: svg
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Import libraries
+```{r}
+library(Seurat)
+library(tidyr)
+library(ggplot2)
+
+source("~/scMultiOmics-normalization/test_functions.R")
+devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
+source("~/scMultiOmics-normalization/testPackage/R/Sc_helper_functions.R")
+
+```
+
+# Import Stuart et al's bone marrow CITE-seq
+# Citation: 
+Stuart T, Butler A, Hoffman P, Hafemeister C, Papalexi E, Mauck WM 3rd, Hao Y, Stoeckius M, Smibert P, Satija R. 
+Comprehensive Integration of Single-Cell Data. Cell. 2019 Jun 13;177(7):1888-1902.e21. doi: 10.1016/j.cell.2019.05.031.
+```{r}
+# SeuratData::InstallData("bmcite", destdir = '/vast/scratch/users/liu.ne')
+bm_data <- SeuratData::LoadData(ds = "bmcite")
+
+```
+
+# Run the other normalization methods for RNA and ADT
+```{r}
+bm_data$log2_rna_libsize <- log2(colSums(bm_data@assays$RNA@layers$counts))
+bm_data$log2_adt_libsize <- log2(colSums(bm_data@assays$ADT@layers$counts))
+
+genes_to_keep <- Seurat::FindVariableFeatures(
+  as.matrix(bm_data@assays$RNA@layers$counts), nfeatures = 8000, 
+  selection.method = 'vst')[['variable']]
+
+rna_metrics <- BenchmarkMetrics(
+  Algorithm = c('Raw_counts', 'Seurat_LogNormalize', 'SCTransform','Seurat_rPCA',
+                'Harmony_LogNormalize','fastMNN', 'totalVI', 
+                'fastRUVIII_supervised', 'fastRUVIII_unsupervised'), 
+  Raw_data = bm_data@assays$RNA@layers$counts[genes_to_keep,], 
+  Metadata = bm_data@meta.data)
+rownames(rna_metrics@Raw_data) <- dimnames(bm_data@assays$RNA)[[1]][genes_to_keep]
+colnames(rna_metrics@Raw_data) <- dimnames(bm_data@assays$RNA)[[2]]
+
+adt_metrics <- BenchmarkMetrics(
+  Algorithm = c('Raw_counts', 'ADTnorm', 'CLR', 'DSB', 'Harmony_CLR', 
+                'totalVI', 'fastRUVIII_supervised', 'fastRUVIII_unsupervised'),
+  Raw_data = bm_data@assays$ADT@layers$counts, 
+  Metadata = bm_data@meta.data)
+rownames(adt_metrics@Raw_data) <- dimnames(bm_data@assays$ADT)[[1]]
+colnames(adt_metrics@Raw_data) <- dimnames(bm_data@assays$ADT)[[2]]
+
+# totalVI python conversion shenanigans
+test <- SingleCellExperiment::SingleCellExperiment(assays = list(ADT = adt_metrics@Raw_data),
+                             colData = bm_data@meta.data)
+test2 <- SingleCellExperiment::SingleCellExperiment(assays = list(RNA = rna_metrics@Raw_data),
+                             colData = bm_data@meta.data)
+# Write H5
+zellkonverter::writeH5AD(test, file = '/vast/scratch/users/liu.ne/ADT.h5ad')
+zellkonverter::writeH5AD(test2, file = '/vast/scratch/users/liu.ne/RNA.h5ad')
+rm(test)
+rm(test2)
+
+# Run all other methods for RNA and ADT
+rna_metrics <- NormalizeRNA(
+  rna_metrics, batch_variable = 'donor', num_pcs = 30)
+
+adt_metrics <- NormalizeADT(
+  adt_metrics, batch_variable = 'donor', num_pcs = 13)
+
+```
+
+# Unsupervised prpc for fastRUVIII
+```{r}
+bm_data <- FindCorrectedMultimodalNeighbours(
+  bm_data, assays = c('RNA', 'ADT'), uv_variables = c('lane', 'donor'), 
+  npcs = c(30, 18), normalization_methods = c('LogNormalize', 'CLR'), 
+  graph.name = 'harmony_wsnn')
+
+bm_data <- FindClusters(
+  bm_data, graph.name = 'harmony_wsnn', resolution = 0.9, 
+  cluster.name = 'harmony_wnn_clusters', algorithm = 2)
+
+rna_metrics@Metadata <- bm_data@meta.data
+adt_metrics@Metadata <- bm_data@meta.data
+
+```
+
+# Get prpc and ncgs
+```{r}
+supervised_prpc_rna <- CreatePRPC(
+  rna_metrics@Raw_data, bio_vars = 'celltype.l2', uv_vars = 'log2_rna_libsize', 
+  group_by_vars = NA, separate_bins_by_biology = T, continuous_bins = 3, 
+  metadata = rna_metrics@Metadata)
+
+unsupervised_prpc_rna <- CreatePRPC(
+  rna_metrics@Raw_data, bio_vars = 'harmony_wnn_clusters', uv_vars = 'log2_rna_libsize', 
+  group_by_vars = NA, separate_bins_by_biology = T, continuous_bins = 3, 
+  metadata = bm_data@meta.data)
+
+supervised_prpc_adt <- CreatePRPC(
+  adt_metrics@Raw_data, bio_vars = 'celltype.l2', uv_vars = 'log2_adt_libsize', 
+  group_by_vars = NA, separate_bins_by_biology = T, continuous_bins = 3, 
+  metadata = adt_metrics@Metadata)
+
+unsupervised_prpc_adt <- CreatePRPC(
+  adt_metrics@Raw_data, bio_vars = 'harmony_wnn_clusters', uv_vars = 'log2_adt_libsize', 
+  group_by_vars = NA, separate_bins_by_biology = T, continuous_bins = 3, 
+  metadata = adt_metrics@Metadata)
+
+# NCGs
+supervised_ncg <- FindNCG(
+  rna_metrics, unwanted_variables = 'log2_rna_libsize', 
+  bio_variables = 'celltype.l2', no.ncg = 800, apply_log = T, 
+  sample_fraction = 0.2)
+
+unsupervised_ncg <- FindNCG(
+  rna_metrics, unwanted_variables = 'log2_rna_libsize', 
+  bio_variables = 'harmony_wnn_clusters', no.ncg = 800, apply_log = T, 
+  sample_fraction = 0.2)
+
+
+```
+
+```{r}
+plot_linear_correlation(
+  list(log2_sparse(rna_metrics@Raw_data[supervised_ncg,])), c('ncg_pca'), 
+  rna_metrics@Metadata$log2_rna_libsize, 'libsize', num_pcs = 5, is.pca.obj = F)
+
+plot_vector_correlation(
+  list(log2_sparse(rna_metrics@Raw_data[supervised_ncg,])), c('ncg_pca'), 
+  rna_metrics@Metadata$celltype.l2, 'celltype', num_pcs = 5, is.pca.obj = F)
+
+plot_linear_correlation(
+  list(log2_sparse(rna_metrics@Raw_data[unsupervised_ncg,])), c('ncg_pca'), 
+  rna_metrics@Metadata$log2_rna_libsize, 'libsize', num_pcs = 5, is.pca.obj = F)
+
+plot_vector_correlation(
+  list(log2_sparse(rna_metrics@Raw_data[unsupervised_ncg,])), c('ncg_pca'), 
+  rna_metrics@Metadata$celltype.l2, 'celltype', num_pcs = 5, is.pca.obj = F)
+
+
+```
+
+# Add totalVI data after we have the totalVI results
+```{r}
+totalVI_adt <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_adt.h5ad')
+totalVI_rna <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_rna.h5ad')
+rna_metrics <- add_totalVI(rna_metrics, totalVI_rna, assay_name = 'rna_normalized', pca = T)
+adt_metrics <- add_totalVI(adt_metrics, totalVI_adt, assay_name = 'adt_normalized', pcs = 13)
+
+```
+# Run fastRUVIII
+```{r}
+rna_metrics <- RunRUVIII(
+  rna_metrics, 
+  prpc = supervised_prpc_rna, 
+  ncgs = rownames(rna_metrics@Raw_data) %in% supervised_ncg, 
+  k = 4, 
+  name = 'fastRUVIII_supervised')
+
+rna_metrics <- RunRUVIII(
+  rna_metrics, prpc = unsupervised_prpc_rna, 
+  ncgs = rownames(rna_metrics@Raw_data) %in% unsupervised_ncg, 
+  k = 4, name = 'fastRUVIII_unsupervised')
+
+adt_metrics <- RunRUVIII(
+  adt_metrics, prpc = supervised_prpc_adt, 
+  ncgs = rep(T, nrow(adt_metrics@Raw_data)), 
+  k = 3, name = 'fastRUVIII_supervised', pcs = 13)
+
+adt_metrics <- RunRUVIII(
+  adt_metrics, prpc = unsupervised_prpc_adt, 
+  ncgs = rep(T, nrow(adt_metrics@Raw_data)), 
+  k = 3, name = 'fastRUVIII_unsupervised', pcs = 13)
+
+```
+
+# Plot metrics
+```{r, fig.height= 6, fig.width= 10}
+p1 <- PlotMultipleCorrelations(rna_metrics, c('log2_rna_libsize','celltype.l2', 'donor'), titles = c('Libsize', 'Celltype', 'Donor'))
+p2 <- PlotMultipleCorrelations(adt_metrics, c('log2_adt_libsize','celltype.l2', 'donor'), titles = c('Libsize', 'Celltype', 'Donor'))
+gridExtra::grid.arrange(p1,p2, nrow = 2)
+```
+
+# Compute assessments 
+```{r}
+adt_metrics <- ComputeAssessments(adt_metrics, c('celltype.l2', 'donor'))
+rna_metrics <- ComputeAssessments(rna_metrics, c('celltype.l2', 'donor'))
+
+adt_neighbours <- lapply(adt_metrics@PCs, function(x){Seurat::FindNeighbors(x)[['snn']]})
+rna_neighbours <- lapply(rna_metrics@PCs, function(x){Seurat::FindNeighbors(x)[['snn']]})
+
+# 27 l2 celltypes
+adt_metrics <- ComputeARIs(adt_metrics, 'celltype.l2', neighbours = adt_neighbours, clust_resolution = c(1.15, 1.1, 1.25, 1.25, 1.1, 1.15, 1.8, 1.8))
+# adt_metrics@ARI$celltype.l2$fastRUVIII_supervised <- mclust::adjustedRandIndex(adt_metrics@Metadata$celltype.l2, Seurat::FindClusters(adt_neighbours$fastRUVIII_supervised, resolution = 2, algorithm = 3)[,1])
+# adt_metrics@ARI$celltype.l2$fastRUVIII_unsupervised <- mclust::adjustedRandIndex(adt_metrics@Metadata$celltype.l2, Seurat::FindClusters(adt_neighbours$fastRUVIII_unsupervised, resolution = 2, algorithm = 3)[,1])
+
+rna_metrics <- ComputeARIs(rna_metrics, 'celltype.l2', neighbours = rna_neighbours, clust_resolution = c(1.8, 2, 1.5, 1.8, 0.9, 2, 1.2, 1.9, 1.9))
+
+```
+
+```{r, fig.width= 9, fig.height= 4}
+p3 <- PlotARIs(rna_metrics, c('celltype.l2'), title = 'Adjusted Rand Index')
+# p4 <- PlotMultipleSilhouette(rna_metrics, variable = 'celltype.l2', title = 'Silhouettes per celltype')
+p5 <- PlotMultipleLISI(rna_metrics, variable = c('celltype.l2'), title = 'Celltype LISI', levels = rna_metrics@Algorithm)
+gridExtra::grid.arrange(p3,p5, ncol = 3)
+```
+
+
+```{r, fig.width= 9, fig.height= 4}
+p3 <- PlotARIs(adt_metrics, c('celltype.l2'), title = 'Adjusted Rand Index')
+# p4 <- PlotMultipleSilhouette(adt_metrics, variable = 'celltype.l2', title = 'Silhouettes per celltype')
+p5 <- PlotMultipleLISI(adt_metrics, variable = c('celltype.l2'), title = 'Celltype LISI', levels = adt_metrics@Algorithm)
+gridExtra::grid.arrange(p3, p5, ncol = 3)
+```
+
+
+
+```{r}
+PlotRuntime(obj = rna_metrics, title = 'RNA runtimes') +
+  coord_cartesian(ylim = c(0,5))
+PlotRuntime(obj = adt_metrics, title = 'ADT runtimes') +
+  coord_cartesian(ylim = c(0,5))
+
+```
+
+
+# UMAPs 
+```{r}
+adt_metrics <- ComputeUMAP(adt_metrics, method = 'uwot')
+rna_metrics <- ComputeUMAP(rna_metrics, method = 'uwot')
+
+```
+
+```{r,fig.width= 9, fig.height= 4}
+# These need to be required in the function
+library(viridis)
+library(cowplot)
+
+method = 'fastRUVIII_supervised'
+
+p1 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$log2_rna_libsize, 
+  title = 'RNA libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 11.8)
+"
+p2 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$donor, 
+  title = 'Donor', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+"
+p3 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$celltype.l2, 
+  title = 'Celltype', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+
+gridExtra::grid.arrange(p1, p3, ncol = 3)
+
+```
+
+```{r, fig.width= 9, fig.height= 4}
+
+method = 'Raw_counts'
+
+p1 <- plot_UMAP(
+  adt_metrics@UMAPs[[method]], metadata_vector = adt_metrics@Metadata$log2_adt_libsize, 
+  title = 'ADT libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 13.5) +
+  scale_color_viridis_c(name= 'libsize') +
+  theme(legend.position = 'right')
+"
+p2 <- plot_UMAP(
+  adt_metrics@UMAPs[[method]], metadata_vector = adt_metrics@Metadata$donor, 
+  title = 'Donor', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+"
+p3 <- plot_UMAP(
+  adt_metrics@UMAPs[[method]], metadata_vector = adt_metrics@Metadata$celltype.l2, 
+  title = 'Celltype', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+
+gridExtra::grid.arrange(p1,p3, ncol = 3)
+
+```
+
+
+
+```{r}
+# save.image(file= '/vast/scratch/users/liu.ne/paper_panels_backup.RData')
+# load('/vast/scratch/users/liu.ne/paper_panels_backup.RData')
+
+# saveRDS(adt_metrics, file = '/vast/scratch/users/liu.ne/adt_metrics.RData')
+# saveRDS(rna_metrics, file = '/vast/scratch/users/liu.ne/rna_metrics.RData')
+
+```
+
+
+
+
+
+
+
