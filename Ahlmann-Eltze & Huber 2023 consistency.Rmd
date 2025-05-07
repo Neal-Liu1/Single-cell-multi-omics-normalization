@@ -1,0 +1,324 @@
+---
+title: "Ahlmann-Eltze & Huber 2023 consistency"
+output: html_document
+---
+
+# Load packages
+```{r}
+library(SingleCellExperiment)
+library(Matrix)
+library(tidyverse)
+library(fastRUVIII)
+source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/consistency_benchmark/download_helper.R")
+source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/transformations/transformation_helper.R")
+library(ggplot2)
+library(ggbeeswarm)
+library(ggh4x)
+library(dplyr)
+
+set.seed(1)
+
+```
+
+# Download datasets
+```{r}
+datasets <- c(
+  "GSE142647", "GSE178765", "GSE179831", "GSE164017", "GSE150068", 
+  "GSE130931", "GSE163505", "GSE158941", "GSE179714", "GSE184806")
+
+for(dataset in datasets){
+message("Getting ", dataset)
+sce <- data_loaders[[dataset]]()
+UMI <- as.matrix(assay(sce))
+
+saveRDS(UMI, file.path("/vast/scratch/users/liu.ne/transformGamPoi_10x_data",dataset))
+}
+
+```
+
+# Setup parameters
+```{r}
+
+# Deleting 100nn and 100pcs -> rarely used
+# Why did they not benchmark the most common 30pc and 20nn (for umap) that seurat uses as default?
+knns <- c(10, 20, 50)
+pcs <- c(5, 10, 50)
+data_paths <- paste0("/vast/scratch/users/liu.ne/transformGamPoi_10x_data/", datasets) |> as.list()
+names(data_paths) <- datasets
+
+# Excluding Sanity (environment shenanigans because not implemented in R)
+transformations <- c(
+  "logp1", 
+  "logp1_hvg", 
+  "logp1_zscore", 
+  "logp1_hvg_zscore",
+  "logp_cpm", 
+  "logp1_size_normed", 
+  "acosh", 
+  "logp_alpha",
+  "pearson", 
+  "pearson_clip", 
+  "pearson_analytic", 
+  "sctransform",
+  "rand_quantile", 
+  "pearson_clip_hvg", 
+  "pearson_clip_zscore",
+  "pearson_clip_hvg_zscore", 
+  "normalisr_norm", 
+  #"sanity_map",
+  #"sanity_dists", 
+  #"glmpca", 
+  "raw_counts", 
+  "scaled_raw_counts"
+)
+
+
+trans_families <- list(
+  delta_method = c(
+    "logp1", 
+    "acosh", 
+    "logp_alpha", 
+    "logp_cpm", 
+    "logp1_size_normed", 
+    "logp1_hvg", 
+    "logp1_zscore",  
+    "logp1_hvg_zscore"),
+  glm_residual = c(
+    "pearson_clip", 
+    "sctransform", 
+    "pearson_analytic", 
+    "rand_quantile", 
+    "pearson",  
+    "pearson_clip_hvg", 
+    "pearson_clip_zscore", 
+    "pearson_clip_hvg_zscore"),
+  latent_expr = c(
+    "sanity_map", 
+    "sanity_dists", 
+    "dino", 
+    "normalisr_norm"),
+  count_model = c(
+    "glmpca", 
+    "newwave"),
+  negative_control = c(
+    "raw_counts", 
+    "scaled_raw_counts"),
+  RUV = 'fastRUVIII') %>%
+  enframe() %>%
+  unnest(value) %>%
+  transmute(transformation = value, family = name)
+
+alphas <- list(
+  logp1 = FALSE,
+  logp1_hvg = FALSE,
+  logp1_zscore = FALSE,
+  logp1_hvg_zscore = FALSE,
+  logp_cpm = FALSE,
+  logp1_size_normed = FALSE,
+  acosh = c(0.05, 0, TRUE),
+  logp_alpha = c(0.05, 0, TRUE),
+  pearson = c(0.05, 0, TRUE),
+  pearson_clip = c(0.05, 0, TRUE),
+  pearson_analytic = c(0.05, 0, TRUE),
+  sctransform = c(0.05, 0, TRUE),
+  rand_quantile = c(0.05, 0, TRUE),
+  pearson_clip_hvg = c(0.05, 0, TRUE),
+  pearson_clip_zscore = c(0.05, 0, TRUE),
+  pearson_clip_hvg_zscore = c(0.05, 0, TRUE),
+  normalisr_norm = FALSE,
+  sanity_map = FALSE,
+  sanity_dists = FALSE,
+  glmpca = c(FALSE, 0.05),
+  raw_counts = FALSE,
+  scaled_raw_counts = FALSE
+)
+
+```
+
+
+# Transform datasets
+```{r}
+
+datasets <- c("GSE179831", "GSE164017", "GSE150068", 
+  "GSE130931", "GSE163505", "GSE158941", "GSE179714", "GSE184806")
+
+for (data in datasets) {
+  
+  UMI <- readRDS(data_paths[[data]])
+  
+  expressed_cells <- matrixStats::colSums2(UMI) > 0
+  expressed_genes <- matrixStats::rowSums2(UMI) > 0
+  UMI <- UMI[expressed_genes, expressed_cells]
+  
+  first_gene_half <- sample(seq_len(nrow(UMI)), round(nrow(UMI) / 2))
+  second_gene_half <- setdiff(seq_len(nrow(UMI)), first_gene_half)
+  
+  UMI_1 <- UMI[first_gene_half, , drop = FALSE]
+  UMI_2 <- UMI[second_gene_half, , drop = FALSE]
+  
+  sf_1 <- MatrixGenerics::colSums2(UMI_1)
+  sf_1 <- sf_1 / mean(sf_1)
+  
+  sf_2 <- MatrixGenerics::colSums2(UMI_2)
+  sf_2 <- sf_2 / mean(sf_2)
+  
+  for (trans in transformations) {
+    
+    current_alphas <- alphas[[trans]]
+    if (!is.vector(current_alphas)) current_alphas <- list(current_alphas)
+    
+    for (alpha in current_alphas) {
+      for (pc in pcs) {
+        for (nn in knns) {
+          cat("Dataset:", data, " | Transformation:", trans, " | Alpha:", alpha, " | PCs:", pc, " | NNs:", nn, "\n")
+          duration <- system.time({
+            trans_dat1 <- all_transformations[[trans]](UMI_1, sf_1, alpha)
+            trans_dat2 <- all_transformations[[trans]](UMI_2, sf_2, alpha)
+            
+            KNN_1 <- make_knn_graph(trans, trans_dat1, pc, nn)
+            KNN_2 <- make_knn_graph(trans, trans_dat2, pc, nn)
+          })
+          
+          result_id <- paste0(data, "_", trans, "_alpha:", alpha, "_pc:", pc, "_nn:", nn)
+          
+          saveRDS(
+            list(KNN_1 = KNN_1, KNN_2 = KNN_2), 
+            file.path(
+              "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/transformed_knns", 
+              result_id
+            )
+          )
+          
+        }
+      }
+    }
+  }
+}
+
+
+
+```
+
+# PARALLELIZED VERSION WITH SLURM
+```{r}
+
+library(future)
+library(future.apply)
+library(batchtools)
+
+resources <- list(walltime = 1800, memory = 5000, ncpus = 1)
+
+# batchtools::makeClusterFunctionsSlurm(template = "~/scMultiOmics-normalization/slurm.tmpl")
+
+# Point to SLURM template
+future::plan(future.batchtools::batchtools_slurm, 
+             template = batchtools::makeClusterFunctionsSlurm(template = "~/scMultiOmics-normalization/slurm.tmpl"), 
+             workers = 50, 
+             resources = resources)  # adjust as needed
+
+param_grid <- crossing(
+  data = datasets,
+  trans = transformations,
+  #pc = pcs,
+  #nn = knns
+)
+
+saveRDS(param_grid, file = "/home/users/allstaff/liu.ne/scMultiOmics-normalization/consistency_params.rds")
+
+```
+
+
+```{r}
+future_lapply(seq_len(nrow(param_grid)), function(i) {
+  source(
+  "/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/transformations/transformation_helper.R")
+  
+  alphas <- list(
+  logp1 = FALSE,
+  logp1_hvg = FALSE,
+  logp1_zscore = FALSE,
+  logp1_hvg_zscore = FALSE,
+  logp_cpm = FALSE,
+  logp1_size_normed = FALSE,
+  acosh = c(0.05, 0, TRUE),
+  logp_alpha = c(0.05, 0, TRUE),
+  pearson = c(0.05, 0, TRUE),
+  pearson_clip = c(0.05, 0, TRUE),
+  pearson_analytic = c(0.05, 0, TRUE),
+  sctransform = c(0.05, 0, TRUE),
+  rand_quantile = c(0.05, 0, TRUE),
+  pearson_clip_hvg = c(0.05, 0, TRUE),
+  pearson_clip_zscore = c(0.05, 0, TRUE),
+  pearson_clip_hvg_zscore = c(0.05, 0, TRUE),
+  normalisr_norm = FALSE,
+  sanity_map = FALSE,
+  sanity_dists = FALSE,
+  glmpca = c(FALSE, 0.05),
+  raw_counts = FALSE,
+  scaled_raw_counts = FALSE)
+  
+  row <- param_grid[i, ]
+  data <- row$data
+  trans <- row$trans
+  pc <- row$pc
+  nn <- row$nn
+  
+  # Loop through each alpha param for each transformation
+  current_alphas <- alphas[[trans]]
+  if (!is.vector(current_alphas)) current_alphas <- list(current_alphas)
+
+  # Get raw count matrix
+  UMI <- readRDS(data_paths[[data]])
+  expressed_cells <- matrixStats::colSums2(UMI) > 0
+  expressed_genes <- matrixStats::rowSums2(UMI) > 0
+  UMI <- UMI[expressed_genes, expressed_cells]
+
+  # Split genes for consistency benchmark
+  first_gene_half <- sample(seq_len(nrow(UMI)), round(nrow(UMI)/2))
+  second_gene_half <- setdiff(seq_len(nrow(UMI)), first_gene_half)
+  UMI_1 <- UMI[first_gene_half,,drop=FALSE]
+  UMI_2 <- UMI[second_gene_half,,drop=FALSE]
+
+  # Size factors
+  sf_1 <- MatrixGenerics::colSums2(UMI_1)
+  sf_1 <- sf_1 / mean(sf_1)
+
+  sf_2 <- MatrixGenerics::colSums2(UMI_2)
+  sf_2 <- sf_2 / mean(sf_2)
+
+  # Apply the methods and get knn
+  for(alpha in current_alphas){
+  duration <- system.time({
+    trans_dat1 <- all_transformations[[trans]](UMI_1, sf_1, alpha)
+    trans_dat2 <- all_transformations[[trans]](UMI_2, sf_2, alpha)
+
+    KNN_1 <- make_knn_graph(trans, trans_dat1, pc, nn)
+    KNN_2 <- make_knn_graph(trans, trans_dat2, pc, nn)
+  })
+
+  # Save results
+  result_id <- paste0(data, "_", trans, "_alpha:", alpha, "_pc:", pc, "_nn:", nn)
+  saveRDS(
+    list(KNN_1 = KNN_1, KNN_2 = KNN_2),
+    file.path(
+      "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/transformed_knns", 
+      result_id
+    )
+  )
+}})
+
+```
+
+
+# Calculate the overlaps
+```{r}
+# Should have around 3870 results
+
+
+
+
+```
+
+
+
+
