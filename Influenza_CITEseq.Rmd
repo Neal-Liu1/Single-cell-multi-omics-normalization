@@ -229,7 +229,7 @@ gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
 
 ```{r}
-p1 <- PlotHVG_Conservation(test, 'batch', n_top_hvgs = 800)
+p1 <- PlotHVG_Conservation(test, 'batch', n_top_hvgs = 800, title = 'owowowo', flavour = 'dispersion')
 p2 <- PlotRuntime(test, log=F)
 gridExtra::grid.arrange(p1,p2, ncol=2)
 ```
@@ -266,22 +266,78 @@ ADT_metrics <- BenchmarkMetrics(
   Metadata = as.data.frame(t(processed_data[['Metadata']]))
   )
 ADT_metrics@Algorithm <- c('Raw_counts', 'DSB', 'CLR', 'Harmony', 'ADTnorm', 'totalVI', 'RUVIII')
+ADT_metrics@Metadata$log2_adt_libsize <- log2(colSums(ADT_metrics@Raw_data))
 
 ADT_metrics <- NormalizeADT(ADT_metrics, params = list(), batch_variable = 'batch')
 
 ```
 
 # RUV normalization
+
 ```{r}
+data_seurat <- Seurat::CreateSeuratObject(
+  processed_data$RNA, assay = 'RNA', 
+  meta.data = data.frame(t(processed_data$Metadata)),
+  key = 'rna_')
 
+data_seurat@assays$ADT <- SeuratObject::CreateAssay5Object(processed_data$ADT, key = 'adt_')
+data_seurat$log2_rna_libsize <- log2(colSums(data_seurat@assays$RNA@layers$counts))
+data_seurat$log2_adt_libsize <- log2(colSums(data_seurat@assays$ADT@layers$counts))
 
+data_seurat <- FindCorrectedMultimodalNeighbours(
+  data_seurat, assays = c('RNA', 'ADT'), 
+  batch_variable = 'batch', 
+  normalization_methods = c('LogNormalize','CLR'),
+  npcs = c(30,18))
 
+data_seurat <- FindClusters(data_seurat, graph.name = 'wsnn', resolution = 1, 
+                            cluster.name = 'harmony-wnn', algorithm = 2)
+
+ADT_metrics@Metadata$harmony_wnn_clusters <- data_seurat$`harmony-wnn`
 
 ```
 
+# Make prpc 
+```{r}
+adt_donor_prpc <- createPrPc_default(
+  ADT_metrics@Raw_data, bio_vector = data_seurat$`harmony-wnn`, 
+  uv_vector = data_seurat$sampleid, sampling = 2, colname_suffix = 'donor')
+
+adt_ls_prpc <- createPrPc_default(
+  ADT_metrics@Raw_data, bio_vector = data_seurat$`harmony-wnn`, 
+  uv_vector = data_seurat$log2_adt_libsize, sampling = 6, colname_suffix = 'libsize')
+
+adt_prpc <- cbind(adt_donor_prpc, adt_ls_prpc)
+
+```
+
+
+```{r}
+test_prpc <- CreatePRPC(
+  ADT_metrics@Raw_data, bio_vars = 'harmony-wnn', uv_vars = c('log2_adt_libsize', 'sampleid'), 
+  group_by_vars = c('batch', NA), separate_bins_by_biology = c(TRUE, NA), 
+  metadata = data_seurat@meta.data,
+  sampling_amount = c(3,1))
+
+View((test_prpc))
+
+```
+
+
+# Run RUVIII
+```{r}
+ADT_metrics <- RunRUVIII(
+  ADT_metrics, adt_prpc, 
+  ncgs = rep(TRUE, nrow(ADT_metrics@Raw_data)), k = 4, 
+  celltype = 'harmony_wnn_clusters', name = 'RUVIII', 
+  M = ruv::replicate.matrix(colnames(adt_prpc)), pcs = 15)
+
+```
+
+
 # Plot correlations
 ```{r, fig.width= 9, fig.height= 3}
-variables <- c('batch', 'K3', 'sampleid', 'log2_ADT_libsize')
+variables <- c('batch', 'K3', 'sampleid', 'log2_adt_libsize')
 PlotMultipleCorrelations(ADT_metrics, variables = variables, titles = c('Batch', 'Celltype', 'Donor', 'Libsize'))
 
 ```
@@ -314,8 +370,6 @@ gridExtra::grid.arrange(p1,p2, ncol=2)
 ```{r}
 PlotRuntime(ADT_metrics, log=F)
 ```
-
-
 
 
 # Backup data
