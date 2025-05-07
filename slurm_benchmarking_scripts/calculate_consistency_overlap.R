@@ -1,7 +1,8 @@
 library(tidyverse)
 
 args <- commandArgs(trailingOnly = TRUE)
-file_path <- args[1]
+result_id <- args[1]
+file_path <- paste0("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/transformed_knns/",args[1])
 
 cat("Processing:", file_path, "\n")
 
@@ -14,14 +15,40 @@ cons <- mean(sapply(seq_len(n_cells), function(cell_idx){
   length(intersect(KNNs[[1]][cell_idx,], KNNs[[2]][cell_idx,]))
 }))
 
+transformations <- c(
+  "logp1", 
+  "logp1_hvg", 
+  "logp1_zscore", 
+  "logp1_hvg_zscore",
+  "logp_cpm", 
+  "logp1_size_normed", 
+  "acosh", 
+  "logp_alpha",
+  "pearson", 
+  "pearson_clip", 
+  "pearson_analytic", 
+  "sctransform",
+  "rand_quantile", 
+  "pearson_clip_hvg", 
+  "pearson_clip_zscore",
+  "pearson_clip_hvg_zscore", 
+  "normalisr_norm", 
+  "raw_counts", 
+  "scaled_raw_counts"
+)
+
+transformations_sorted <- transformations[order(nchar(transformations), decreasing = TRUE)]
+transformation <- transformations_sorted[which.max(str_detect(result_id, fixed(transformations_sorted)))]
+
 res <- tibble(
   mean_overlap = cons, 
-  transformation_id = pa$input_id, 
-  dataset = pa$dataset, 
-  seed = pa$seed,
-  pca_dim = pa$pca_dim, 
-  knn = pa$knn, 
-  transformation = pa$transformation, 
-  alpha = pa$alpha)
+  transformation_id = result_id, 
+  dataset = str_extract(result_id, "^GSE\\d+"), 
+  seed = 1,
+  pca_dim = str_extract(result_id, "(?<=pc:)\\d+"), 
+  knn = str_extract(result_id, "(?<=nn:)\\d+"), 
+  transformation = transformation, 
+  alpha = str_extract(result_id, "(?<=alpha:)\\d*\\.?\\d+"))
 
-write_tsv(res, file.path(pa$working_dir, "results", pa$result_id))
+write_tsv(res, paste0("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/knn_overlap_metrics/", result_id))
+
