@@ -310,12 +310,80 @@ future_lapply(seq_len(nrow(param_grid)), function(i) {
 ```
 
 
+
 # Calculate the overlaps
 ```{r}
 # Should have around 3870 results
 
 
 
+```
+
+# Bind the final result tsv
+```{r}
+
+
+consistency_results <- paste0(
+  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/knn_overlap_metrics/",
+  read_lines("~/scMultiOmics-normalization/slurm_benchmarking_scripts/consistency_result_paths.txt"))
+
+res <- lapply(consistency_results, function(res_id){
+  res <- read_tsv(res_id, col_types = list(alpha = "character"), show_col_types = FALSE)
+  # duration <- read_tsv(file.path(pa$working_dir, "duration", res$transformation_id), show_col_types = FALSE))
+}) %>%
+  bind_rows()
+
+write_tsv(res, "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/final_metrics.tsv")
+
+
+
+```
+
+# Filtering
+```{r}
+
+res_main <- res %>%
+  filter(alpha %in% c(1, NA)) %>%
+  #tidylog::inner_join(parameter_choices)  %>%
+  mutate(knn_recovery = mean_overlap / knn) %>%
+  group_by(dataset, knn) %>%
+  mutate(knn_recovery = knn_recovery / mean(knn_recovery)) %>%
+  tidylog::left_join(trans_families)
+
+
+```
+
+
+# Plot results
+```{r}
+
+p <- ggplot(res_main, aes(x = knn_recovery, y = transformation)) +
+  # Grey points
+  geom_quasirandom(color = "grey", size = 1, alpha = 0.2) +
+  # Colored mean points (no CI)
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    aes(color = family),
+    size = 3
+  ) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(name = "Relative k-NN overlap", breaks = c(0.5, 1, 1.5)) +
+  coord_cartesian(xlim = c(0, 2)) +
+  scale_color_brewer(palette = "Dark2") +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_text(size = 9),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "grey30", fill = NA, size = 0.1),
+    legend.position = "none",
+    plot.title.position = "plot"
+  ) +
+  ggh4x::facet_grid2(rows = vars(family), scales = "free_y", space = "free_y", switch = "y") +
+  theme(strip.text.y.left = element_blank())
+
+p
 
 ```
 
