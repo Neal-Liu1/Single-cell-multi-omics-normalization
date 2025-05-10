@@ -17,12 +17,16 @@ library(ggbeeswarm)
 library(ggh4x)
 library(dplyr)
 
+set.seed(1)
+
+result_dir <- "/vast/scratch/users/liu.ne/transformGamPoi_simulation_data"
+
 ```
 
 # Simulate with dyngen
 ```{r}
 
-options(Ncpus = 1L) # change this to the number of cores in your system
+options(Ncpus = 8L) # change this to the number of cores in your system
 options(dyngen_download_cache_dir = "/vast/scratch/users/liu.ne")
 
 num_cells <- 5000
@@ -31,11 +35,12 @@ backbone <- dyngen::backbone_consecutive_bifurcating()
 num_tfs <- nrow(backbone$module_info)
 num_targets <- round((num_features - num_tfs) / 2)
 num_hks <- num_features - num_targets - num_tfs
-config <- dyngen::initialise_model(backbone = backbone,
-                                   num_tfs = num_tfs,
-                                   num_targets = num_targets,
-                                   num_hks = num_hks,
-                                   num_cells = num_cells)
+config <- dyngen::initialise_model(
+  backbone = backbone, # typo in the original code: backbon instead of backbone. Im not sure if it actually was passed into the function correctly. 
+  num_tfs = num_tfs,
+  num_targets = num_targets,
+  num_hks = num_hks,
+  num_cells = num_cells)
 # calls generate_tf_network, generate_feature_network, generate_kinetics, 
 # generate_gold_standard, generate_cells, generate_experiment
 res <- dyngen::generate_dataset(config, format = "sce")
@@ -102,7 +107,9 @@ for(idx in seq_len(n_cells)-1){
     branch_idx <- branch_idx + 1
     parents[idx+1] <- idx-1
   }
-  delta <- rnorm(n_genes, mean = start_point + (end_point - start_point) * branch_idx / branch_length, sd = 0.1)
+  delta <- rnorm(
+    n_genes, 
+    mean = start_point + (end_point - start_point) * branch_idx / branch_length, sd = 0.1)
   delta_true[,idx+1] <- delta
 }
 
@@ -132,7 +139,13 @@ delta_true <- (delta_true - rowMeans2(delta_true)) * lambda
 mu_g <- mu_tilde_g - sig2_g / 2
 
 # UMI = poissrnd( N_c.*exp(E) );
-linearwalk_UMI <- matrix(rnbinom(n_genes * n_cells, mu = t(t(exp(mu_g + delta_true)) * N_c), size = 1/0.01), n_genes, n_cells)
+linearwalk_UMI <- matrix(
+  rnbinom(
+    n_genes * n_cells, 
+    mu = t(t(exp(mu_g + delta_true)) * N_c), 
+    size = 1/0.01), 
+  n_genes, 
+  n_cells)
 
 saveRDS(list(ground_truth = delta_true, UMI = linearwalk_UMI), 
         file.path('/vast/scratch/users/liu.ne/Linearwalk_sim_results'))
@@ -155,10 +168,16 @@ muscat_sim <- muscat::simData(sce_preped, rel_lfc =c(1, 0.5, 0.1, 0.05), nc = 5e
 
 # Reconstruct ground truth matrix
 tmp <- as_tibble(metadata(muscat_sim)$gene_info) %>%
-  pivot_longer(starts_with("sim_mean"), names_sep = "\\.", names_to = c(".value", "group_id")) %>%
+  pivot_longer(
+    starts_with("sim_mean"), 
+    names_sep = "\\.", 
+    names_to = c(".value", "group_id")) %>%
   dplyr::select(gene, cluster_id, group_id, sim_mean) %>%
-  full_join(colData(muscat_sim) %>% as_tibble(rownames = "cell_id") %>% mutate(cell_id = factor(cell_id, levels = cell_id)),
-            by = c("cluster_id", "group_id"))
+  full_join(
+    colData(muscat_sim) %>% 
+      as_tibble(rownames = "cell_id") %>% 
+      mutate(cell_id = factor(cell_id, levels = cell_id)),
+    by = c("cluster_id", "group_id"))
 
 ground_truth_mat <- tmp %>%
   arrange(cell_id) %>%
@@ -253,4 +272,46 @@ sce <- get_GSE130931_data()
 colData(sce)$cluster_id <- scran::quickCluster(sce, min.size = 20)
 
 
-n_genes <- nrow(
+n_genes <- nrow(sce)
+n_cells <- ncol(sce)
+sce <- sce[seq_len(n_genes), seq_len(n_cells)]
+sce <- sce[,colSums2(assay(sce)) > 0]
+sce <- sce[rowSums2(assay(sce)) > 0,]
+
+# For plotting
+sce <- scuttle::logNormCounts(sce)
+
+
+# More Clusters, make sure that there are no singlets
+mat <- counts(sce)
+colnames(mat) <- as.character(sce$cluster_id)
+cluster_names <- unique(as.character(sce$cluster_id))
+fit <- scDesign2::fit_model_scDesign2(mat, cell_type_sel = cluster_names, sim_method = "copula", marginal = "nb")
+UMI <- scDesign2::simulate_count_scDesign2(fit, n_cell_new = ncol(mat), cell_type_prop = table(colnames(mat))[cluster_names] / ncol(mat), sim_method = "copula")
+
+# Reconstruct ground truth
+ground_truth <- do.call(cbind, lapply(fit[cluster_names], function(fi) {
+  mat <- matrix(NA, nrow = nrow(mat), ncol = fi$n_cell)
+  mat[fi$gene_sel1, ] <- fi$marginal_param1[,3]
+  mat[fi$gene_sel2, ] <- fi$marginal_param2[,3]
+  mat[fi$gene_sel3, ] <- 1e-8
+  mat
+}))
+
+sim <- SingleCellExperiment(assays = list(counts = UMI, LogExpressionMean = log10(ground_truth)), colData = data.frame(cluster = colnames(UMI)))
+sim$seq_depth <- colSums2(counts(sim))
+
+# Save simulated data
+saveRDS(list(ground_truth = assay(sim, "LogExpressionMean"), UMI = assay(sim, "counts")), 
+        file.path(pa$working_dir, "results/", pa$result_id))
+
+```
+
+
+
+
+
+
+
+
+
