@@ -23,290 +23,359 @@ result_dir <- "/vast/scratch/users/liu.ne/transformGamPoi_simulation_data"
 
 ```
 
-# Simulate with dyngen
+
+# Setup parameters
 ```{r}
 
-options(Ncpus = 8L) # change this to the number of cores in your system
-options(dyngen_download_cache_dir = "/vast/scratch/users/liu.ne")
+knns <- c(10, 20, 50)
+pcs <- c(5, 10, 50)
 
-num_cells <- 5000
-num_features <- 1000
-backbone <- dyngen::backbone_consecutive_bifurcating()
-num_tfs <- nrow(backbone$module_info)
-num_targets <- round((num_features - num_tfs) / 2)
-num_hks <- num_features - num_targets - num_tfs
-config <- dyngen::initialise_model(
-  backbone = backbone, # typo in the original code: backbon instead of backbone. Im not sure if it actually was passed into the function correctly. 
-  num_tfs = num_tfs,
-  num_targets = num_targets,
-  num_hks = num_hks,
-  num_cells = num_cells)
-# calls generate_tf_network, generate_feature_network, generate_kinetics, 
-# generate_gold_standard, generate_cells, generate_experiment
-res <- dyngen::generate_dataset(config, format = "sce")
-sim <- res$dataset
-
-# Filter out problematic columns and rows
-UMI <- counts(sim)
-expressed_cells <- colSums2(UMI) > 10
-expressed_genes <- rowSums2(UMI) > 0
-sim <- sim[, expressed_cells]
-sim <- sim[expressed_genes, ]
-
-saveRDS(list(ground_truth = t(reducedDim(sim, "MDS")), UMI = assay(sim, "counts")), 
-        file.path('/vast/scratch/users/liu.ne/Dyngen_sim_results'))
-
-
-```
-
-# Simulate with linear walk
-```{r}
-
-sce <- scRNAseq::BaronPancreasData("human")
-
-sce <- scuttle::logNormCounts(sce)
-colData(sce)$cluster_id <- scran::quickCluster(sce)
-
-n_genes <- nrow(sce)
-n_cells <- ncol(sce)
-# n_genes <- 4000
-# n_cells <- 500
-reference_data_counts <- assay(sce)[seq_len(n_genes), seq_len(n_cells)]
-reference_data_counts <- reference_data_counts[,colSums2(reference_data_counts) > 0]
-reference_data_counts <- reference_data_counts[rowSums2(reference_data_counts) > 0,]
-n_genes <- nrow(reference_data_counts)
-n_cells <- ncol(reference_data_counts)
-
-## Simulation
-
-
-# Make linear walk tree
-delta_true <- matrix(NA, n_genes, n_cells)
-parents <- rep(NA, n_cells)
-
-branch_length <- 1200
-branch_idx <- 0
-start_point <- NULL
-end_point <- NULL
-
-# Make linear walk
-for(idx in seq_len(n_cells)-1){
-  if(idx == 0){
-    parents[idx+1] <- -1
-    start_point <- rnorm(n_genes, mean = 0, sd = 1)
-    end_point <- rnorm(n_genes, mean = 0, sd = 1)
-  }else if(idx %% branch_length == 0){
-    start_id <- sample.int(idx, size = 1)
-    parents[idx+1] <- start_id - 1
-    # Make new start and end point
-    branch_idx <- 0
-    start_point <- rnorm(n_genes, mean = delta_true[,  parents[idx+1]], sd = 0.1)
-    end_point <- rnorm(n_genes, mean = 0, sd = 5)
-  }else{
-    # Continue with idx-1 as parent
-    branch_idx <- branch_idx + 1
-    parents[idx+1] <- idx-1
-  }
-  delta <- rnorm(
-    n_genes, 
-    mean = start_point + (end_point - start_point) * branch_idx / branch_length, sd = 0.1)
-  delta_true[,idx+1] <- delta
-}
-
-
-# Copied and adapted from https://github.com/jmbreda/Sanity/blob/94e7063027cb1cd0368134395bfb501e1f8b8377/reproducibility/run_Simulations.m
-# N_c = sum(T{:,:},1);
-N_c <- colSums2(reference_data_counts)
-# ng <- ng / mean(ng)
-
-# mu_tilde_g = log(sum(SC{:,:},2)./sum(sum(SC{:,:})));
-mu_tilde_g <- log(rowSums2(reference_data_counts) / sum(reference_data_counts))
-
-# Note the confusing rate vs scale parametrization...
-# sig2_g = exprnd(2,N_gene,1);
-sig2_g <- rexp(n_genes, rate = 1/2)
-
-
-# lambda = sqrt( sig2_g./var(delta_true,0,2) );
-lambda <- sqrt( sig2_g / rowVars(delta_true) )
-
-
-# delta_true <- matrix(rnorm(n_genes * n_cells, mean = 0, sd = 1), nrow = n_genes, ncol = n_cells)
-# delta_true = lambda.*(delta_true-mean(delta_true,2));
-delta_true <- (delta_true - rowMeans2(delta_true)) * lambda
-
-# mu_g = mu_tilde_g - sig2_g/2;
-mu_g <- mu_tilde_g - sig2_g / 2
-
-# UMI = poissrnd( N_c.*exp(E) );
-linearwalk_UMI <- matrix(
-  rnbinom(
-    n_genes * n_cells, 
-    mu = t(t(exp(mu_g + delta_true)) * N_c), 
-    size = 1/0.01), 
-  n_genes, 
-  n_cells)
-
-saveRDS(list(ground_truth = delta_true, UMI = linearwalk_UMI), 
-        file.path('/vast/scratch/users/liu.ne/Linearwalk_sim_results'))
-
-```
-
-# Simulate with muscat
-```{r}
-data(example_sce)
-sce_preped <- prepSim(example_sce, verbose = FALSE)
-
-
-# Make dataset with 
-# * 5000 cells
-# * 100 genes
-# * 2 samples
-# * 70% equal expression, 30% DE 
-# * and 4 cluster
-muscat_sim <- muscat::simData(sce_preped, rel_lfc =c(1, 0.5, 0.1, 0.05), nc = 5e3, nk = 4, p_dd = c(0.7, 0, 0.3, 0, 0, 0), lfc = 2, ng = 1e3, force = TRUE)
-
-# Reconstruct ground truth matrix
-tmp <- as_tibble(metadata(muscat_sim)$gene_info) %>%
-  pivot_longer(
-    starts_with("sim_mean"), 
-    names_sep = "\\.", 
-    names_to = c(".value", "group_id")) %>%
-  dplyr::select(gene, cluster_id, group_id, sim_mean) %>%
-  full_join(
-    colData(muscat_sim) %>% 
-      as_tibble(rownames = "cell_id") %>% 
-      mutate(cell_id = factor(cell_id, levels = cell_id)),
-    by = c("cluster_id", "group_id"))
-
-ground_truth_mat <- tmp %>%
-  arrange(cell_id) %>%
-  dplyr::select(gene, cell_id, sim_mean) %>%
-  pivot_wider(id_cols = gene, names_from = cell_id, values_from = sim_mean) %>%
-  column_to_rownames("gene") %>%
-  as.matrix()
-
-assay(muscat_sim, "LogExpressionMean") <- log10(ground_truth_mat + 1e-4)
-
-
-saveRDS(list(ground_truth = assay(muscat_sim, "LogExpressionMean"), UMI = assay(muscat_sim, "counts")), 
-        file.path('/vast/scratch/users/liu.ne/Muscat_sim_results'))
-
-```
-
-# Simulate with random walk
-```{r}
-
-reference_data_counts <- assay(sce)[seq_len(n_genes), seq_len(n_cells)]
-reference_data_counts <- reference_data_counts[,colSums2(reference_data_counts) > 0]
-reference_data_counts <- reference_data_counts[rowSums2(reference_data_counts) > 0,]
-n_genes <- nrow(reference_data_counts)
-n_cells <- ncol(reference_data_counts)
-
-## Simulation
-
-
-# Make random walk tree
-delta_true <- matrix(NA, n_genes, n_cells)
-parents <- rep(NA, n_cells)
-
-branch_length <- 13
-
-# Make random walk tree
-for(idx in seq_len(n_cells)){
-  # See section S1.2 in Breda paper
-  if(idx == 1){
-    delta <- rnorm(n_genes, mean = 0, sd = 1)
-    parents[idx] <- 0
-  }else if(idx %% branch_length == 0){
-    # Choose new parent
-    parents[idx] <- sample.int(idx - 1, size = 1)
-    parent_delta <- delta_true[,  parents[idx]]
-    delta <- rnorm(n_genes, mean = parent_delta, sd = 1)
-  }else{
-    # Continue with idx-1 as parent
-    parents[idx] <- idx-1
-    parent_delta <- delta_true[, parents[idx]]
-    delta <- rnorm(n_genes, mean = parent_delta, sd = 1)
-  }
-  delta_true[,idx] <- delta
-}
-
-
-# Copied and adapted from https://github.com/jmbreda/Sanity/blob/94e7063027cb1cd0368134395bfb501e1f8b8377/reproducibility/run_Simulations.m
-# N_c = sum(T{:,:},1);
-N_c <- colSums2(reference_data_counts)
-# ng <- ng / mean(ng)
-
-# mu_tilde_g = log(sum(SC{:,:},2)./sum(sum(SC{:,:})));
-mu_tilde_g <- log(rowSums2(reference_data_counts) / sum(reference_data_counts))
-
-# Note the confusing rate vs scale parametrization...
-# sig2_g = exprnd(2,N_gene,1);
-sig2_g <- rexp(n_genes, rate = 1/2)
-
-
-# lambda = sqrt( sig2_g./var(delta_true,0,2) );
-lambda <- sqrt( sig2_g / rowVars(delta_true) )
-
-
-# delta_true <- matrix(rnorm(n_genes * n_cells, mean = 0, sd = 1), nrow = n_genes, ncol = n_cells)
-# delta_true = lambda.*(delta_true-mean(delta_true,2));
-randomwalk_delta_true <- (delta_true - rowMeans2(delta_true)) * lambda
-
-# mu_g = mu_tilde_g - sig2_g/2;
-mu_g <- mu_tilde_g - sig2_g / 2
-
-# UMI = poissrnd( N_c.*exp(E) );
-randomwalk_UMI <- matrix(rnbinom(n_genes * n_cells, mu = t(t(exp(mu_g + delta_true)) * N_c), size = 1/0.01), n_genes, n_cells)
-
-saveRDS(list(ground_truth = randomwalk_delta_true, UMI = randomwalk_UMI), 
-        file.path('/vast/scratch/users/liu.ne/Randomwalk_sim_results'))
-
-```
-
-# Simulate with scDesign2
-```{r}
-sce <- get_GSE130931_data()
-
-colData(sce)$cluster_id <- scran::quickCluster(sce, min.size = 20)
-
-
-n_genes <- nrow(sce)
-n_cells <- ncol(sce)
-sce <- sce[seq_len(n_genes), seq_len(n_cells)]
-sce <- sce[,colSums2(assay(sce)) > 0]
-sce <- sce[rowSums2(assay(sce)) > 0,]
-
-# For plotting
-sce <- scuttle::logNormCounts(sce)
-
-
-# More Clusters, make sure that there are no singlets
-mat <- counts(sce)
-colnames(mat) <- as.character(sce$cluster_id)
-cluster_names <- unique(as.character(sce$cluster_id))
-fit <- scDesign2::fit_model_scDesign2(mat, cell_type_sel = cluster_names, sim_method = "copula", marginal = "nb")
-UMI <- scDesign2::simulate_count_scDesign2(fit, n_cell_new = ncol(mat), cell_type_prop = table(colnames(mat))[cluster_names] / ncol(mat), sim_method = "copula")
-
-# Reconstruct ground truth
-ground_truth <- do.call(cbind, lapply(fit[cluster_names], function(fi) {
-  mat <- matrix(NA, nrow = nrow(mat), ncol = fi$n_cell)
-  mat[fi$gene_sel1, ] <- fi$marginal_param1[,3]
-  mat[fi$gene_sel2, ] <- fi$marginal_param2[,3]
-  mat[fi$gene_sel3, ] <- 1e-8
-  mat
+simulations <- c("Dyngen", "scDesign", "Muscat", "Linearwalk", "Randomwalk")
+data_path <- "/vast/scratch/users/liu.ne/transformGamPoi_simulation_data/"
+file_paths <- unlist(lapply(simulations, function(sim) {
+  list.files(path = data_path, pattern = paste0("^", sim, "_seed_\\d+\\.rds$"), full.names = TRUE)
+}))
+file_names <- unlist(lapply(simulations, function(sim) {
+  list.files(path = data_path, pattern = paste0("^", sim, "_seed_\\d+\\.rds$"), full.names = FALSE)
 }))
 
-sim <- SingleCellExperiment(assays = list(counts = UMI, LogExpressionMean = log10(ground_truth)), colData = data.frame(cluster = colnames(UMI)))
-sim$seq_depth <- colSums2(counts(sim))
+# Excluding Sanity (environment shenanigans because not implemented in R)
+transformations <- c(
+  "logp1", 
+  "logp1_hvg", 
+  "logp1_zscore", 
+  "logp1_hvg_zscore",
+  "logp_cpm", 
+  "logp1_size_normed", 
+  "acosh", 
+  "logp_alpha",
+  "pearson", 
+  "pearson_clip", 
+  "pearson_analytic", 
+  "sctransform",
+  "rand_quantile", 
+  "pearson_clip_hvg", 
+  "pearson_clip_zscore",
+  "pearson_clip_hvg_zscore", 
+  "normalisr_norm", 
+  #"sanity_map",
+  #"sanity_dists", 
+  #"glmpca", 
+  "raw_counts", 
+  "scaled_raw_counts"
+)
 
-# Save simulated data
-saveRDS(list(ground_truth = assay(sim, "LogExpressionMean"), UMI = assay(sim, "counts")), 
-        file.path(pa$working_dir, "results/", pa$result_id))
+
+trans_families <- list(
+  delta_method = c(
+    "logp1", 
+    "acosh", 
+    "logp_alpha", 
+    "logp_cpm", 
+    "logp1_size_normed", 
+    "logp1_hvg", 
+    "logp1_zscore",  
+    "logp1_hvg_zscore"),
+  glm_residual = c(
+    "pearson_clip", 
+    "sctransform", 
+    "pearson_analytic", 
+    "rand_quantile", 
+    "pearson",  
+    "pearson_clip_hvg", 
+    "pearson_clip_zscore", 
+    "pearson_clip_hvg_zscore"),
+  latent_expr = c(
+    "sanity_map", 
+    "sanity_dists", 
+    "dino", 
+    "normalisr_norm"),
+  count_model = c(
+    "glmpca", 
+    "newwave"),
+  negative_control = c(
+    "raw_counts", 
+    "scaled_raw_counts"),
+  RUV = 'fastRUVIII') %>%
+  enframe() %>%
+  unnest(value) %>%
+  transmute(transformation = value, family = name)
+
+alphas <- list(
+  logp1 = FALSE,
+  logp1_hvg = FALSE,
+  logp1_zscore = FALSE,
+  logp1_hvg_zscore = FALSE,
+  logp_cpm = FALSE,
+  logp1_size_normed = FALSE,
+  acosh = c(0.05, 0, TRUE),
+  logp_alpha = c(0.05, 0, TRUE),
+  pearson = c(0.05, 0, TRUE),
+  pearson_clip = c(0.05, 0, TRUE),
+  pearson_analytic = c(0.05, 0, TRUE),
+  sctransform = c(0.05, 0, TRUE),
+  rand_quantile = c(0.05, 0, TRUE),
+  pearson_clip_hvg = c(0.05, 0, TRUE),
+  pearson_clip_zscore = c(0.05, 0, TRUE),
+  pearson_clip_hvg_zscore = c(0.05, 0, TRUE),
+  normalisr_norm = FALSE,
+  sanity_map = FALSE,
+  sanity_dists = FALSE,
+  glmpca = c(FALSE, 0.05),
+  raw_counts = FALSE,
+  scaled_raw_counts = FALSE
+)
+
+sim_params <- tidyr::tibble(  
+  data = file_names,
+  path = file_paths
+  )
+
+sim_params <- tidyr::crossing(
+  sim_params,
+  trans = transformations
+)
+
+#saveRDS(sim_params, file = "/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts/simulation_params.rds")
 
 ```
 
+# Now run the slurm jobs
+# Calculate KNNs after running the slurm jobs
+```{r}
+library(stringr)
+library(dplyr)
+
+# Step 1: List all result file paths
+files <- list.files(
+  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/transformed_knns", 
+  full.names = TRUE)
+
+# Sort transformations so longer names are matched first
+transformations_sorted <- transformations[order(nchar(transformations), decreasing = TRUE)]
+
+# Build regex pattern
+pattern <- paste0("(", paste(transformations_sorted, collapse = "|"), ")")
+
+# Step 2: Extract metadata
+file_info <- tibble(path = files) %>%
+  mutate(
+    filename = basename(path),
+    simulation = str_extract(filename, "^[^_]+"),  # e.g. Dyngen
+    seed = str_extract(filename, "(?<=_seed_)\\d+"),
+transformation = str_extract(filename, pattern),
+    group = paste(simulation, seed, transformation, sep = "_")
+  )
+
+# Step 3: Split into named list
+grouped_files <- split(file_info, file_info$group)
+
+saveRDS(
+  grouped_files, 
+  "/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts/simulation_result_paths.rds")
+
+```
+
+
+
+
+# RUVIII Normalization (after the slurm script for generating simulation data has been run)
+```{r}
+
+cluster_res <- c(0.1, 0.5, 1)
+ruv_params <- tidyr::crossing(seed = 1:5, simulations, cluster_res)
+
+# REQUIRES MANUAL CHANGING AND EXPLORING CLUSTERS
+seed <- 3
+simulation <- "Dyngen"
+  
+ground_truth_paths <- paste0(
+  "/vast/scratch/users/liu.ne/transformGamPoi_simulation_data/", simulation,"_seed_",1:5,".rds")
+
+ground_truth_data <- readRDS(ground_truth_paths[[seed]])
+matrix <- ground_truth_data$UMI
+
+hvgs <- Seurat::VST(matrix, nselect = 0.2 * nrow(matrix))
+
+pca <- BiocSingular::runSVD(
+  t(matrix[hvgs$variable,]), center= T, scale = F, 
+  BSPARAM = BiocSingular::bsparam(), 
+  k = 20)
+
+umap <- uwot::umap(pca$u, n_neighbors = 20, n_components = 3)
+
+neighbors <- Seurat::FindNeighbors(as(pca$u,'dgCMatrix'), k.param = 20)
+clusters <- Seurat::FindClusters(neighbors$snn, resolution = 0.2)
+
+plotly::plot_ly(
+  data = as.data.frame(umap), 
+  x = ~V1, y = ~V2, z = ~V3, color = unlist(clusters), 
+  type = 'scatter3d', mode = 'markers',
+  marker = list(size = 4, opacity = 0.8)) %>%
+  plotly::layout(
+    title = "3D UMAP",
+    scene = list(
+      xaxis = list(title = 'V1'),
+      yaxis = list(title = 'V2'),
+      zaxis = list(title = 'V3')
+      )
+    )
+
+```
+
+# RUVIII normalization
+```{r}
+libsize <- log2(colSums(matrix))
+metadata <- data.frame(libsize = libsize, cluster = unlist(clusters))
+k <- c(1,2)
+
+prpc <- fastRUVIII::CreatePRPC(
+  matrix, 
+  bio_vars = 'cluster', 
+  uv_vars = 'libsize', 
+  separate_bins_by_biology = T,
+  group_by_vars = NA,
+  metadata = metadata)
+
+ncgs <- fastRUVIII::FindNCG(
+  matrix, 
+  unwanted_variables = 'libsize', 
+  bio_variables = 'cluster', 
+  metadata = metadata, 
+  no.ncg = 0.1 * nrow(matrix))
+
+ground_truth <- ground_truth_data$ground_truth
+
+for(k in k){
+norm_data <- fastRUVIII::fastRUVIII(
+  matrix, 
+  k= k, 
+  replicates = prpc, 
+  control_genes = ncgs)$newY %>% t()
+
+for(pc in pcs){
+  for(nn in knns){
+    
+knn <- make_knn_graph("fastRUVIII", dat =  norm_data, pca_dim = pc, k_nearest_neighbors = nn)
+
+ground_truth_knn <- BiocNeighbors::findAnnoy(
+    t(ground_truth),
+    k = nn,
+    warn.ties = FALSE,
+    get.distance = FALSE
+  )$index
+  
+knn_overlap <- mean(sapply(seq_len(nrow(knn)), function(cell_idx) {
+    length(intersect(ground_truth_knn[cell_idx, ], knn[cell_idx, ]))
+  }))
+  
+ground_truth_knn_graph <- bluster::neighborsToKNNGraph(ground_truth_knn)
+ground_truth_clustering_obj <- igraph::cluster_walktrap(ground_truth_knn_graph)
+ground_truth_clustering <- factor(igraph::membership(ground_truth_clustering_obj))
+n_clusters <- length(levels(ground_truth_clustering))
+message("  Ground truth clusters: ", n_clusters)
+  
+knn_graph <- bluster::neighborsToKNNGraph(knn)
+tmp_clustering_obj <- igraph::cluster_walktrap(knn_graph)
+cluster_assignment <- factor(igraph::membership(tmp_clustering_obj))
+n_clusters_counts <- length(levels(cluster_assignment))
+message("  Clusters found: ", n_clusters_counts)
+  
+ARI <- aricode::ARI(ground_truth_clustering, cluster_assignment)
+AMI <- aricode::AMI(ground_truth_clustering, cluster_assignment)
+NMI <- aricode::NMI(ground_truth_clustering, cluster_assignment)
+  
+res <- tibble(
+    ARI = ARI,
+    AMI = AMI,
+    NMI = NMI,
+    mean_knn_overlap = knn_overlap,
+    n_clusters = n_clusters,
+    n_clusters_counts = n_clusters_counts,
+    simulator = simulation, 
+    seed = seed, 
+    pca_dim = pc,
+    knn = nn,
+    transformation = "fastRUVIII",
+    alpha = FALSE
+  )
+  
+  out_path <- file.path(
+    "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/knn_overlap_metrics",
+    paste0(simulation, "_seed_",seed,"_fastRUVIII_k", k,"_pc:",pc,"_nn:",nn,".tsv")
+  )
+  
+  write_tsv(res, out_path)
+}
+}}
+
+
+
+```
+
+# Bind the final result tsv
+```{r}
+
+
+result_paths <- list.files(
+  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/knn_overlap_metrics/", 
+  full.names = TRUE)
+
+res <- lapply(result_paths, function(res_id){
+  res <- read_tsv(res_id, col_types = list(alpha = "character"), show_col_types = FALSE)
+  # duration <- read_tsv(file.path(pa$working_dir, "duration", res$transformation_id), show_col_types = FALSE))
+}) %>%
+  bind_rows()
+
+write_tsv(res, "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/final_metrics.tsv")
+
+
+
+```
+
+# Filtering
+```{r}
+
+res_main <- res %>%
+  filter(alpha %in% c("1", NA, "TRUE", "FALSE")) %>%
+  #filter(seed %in% 1:5) %>%
+  #filter(simulator %in% "Linearwalk") %>%
+  #filter(pca_dim == 10) %>%
+  #filter(knn %in% 10)
+  mutate(knn_recovery = mean_knn_overlap / knn) %>%
+  mutate(knn_recovery = knn_recovery / mean(knn_recovery)) %>%
+  tidylog::left_join(trans_families)
+
+
+p <- ggplot(res_main, aes(x = knn_recovery, y = transformation)) +
+  # Grey points
+  geom_quasirandom(color = "grey", size = 1, alpha = 0.2) +
+  # Colored mean points (no CI)
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    aes(color = family),
+    size = 3
+  ) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(name = "Relative k-NN overlap", breaks = c(0.5, 1, 1.5)) +
+  #coord_cartesian(xlim = c(0, 2)) +
+  scale_color_brewer(palette = "Dark2") +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_text(size = 9),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "grey30", fill = NA, size = 0.1),
+    legend.position = "none",
+    plot.title.position = "plot"
+  ) +
+  ggh4x::facet_grid2(rows = vars(family), scales = "free_y", space = "free_y", switch = "y") +
+  theme(strip.text.y.left = element_blank())
+
+p
+
+```
 
 
 
