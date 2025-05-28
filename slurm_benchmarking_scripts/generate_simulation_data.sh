@@ -5,8 +5,8 @@
 #SBATCH --array=1-5
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=30G
-#SBATCH --time=01:00:00
+#SBATCH --mem=40G
+#SBATCH --time=05:00:00
 
 module load R/4.4.1
 Rscript generate_simulation_data.R $SLURM_ARRAY_TASK_ID

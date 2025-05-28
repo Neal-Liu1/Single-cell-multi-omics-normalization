@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=file_processor
+#SBATCH --job-name=consistency_knn_overlap
 #SBATCH --output=/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/logs/out/%A_%a.out
 #SBATCH --error=/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/logs/errors/%A_%a.err
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G
-#SBATCH --time=00:20:00
+#SBATCH --time=00:10:00
 #SBATCH --array=1-1000
 
 # Positional arguments

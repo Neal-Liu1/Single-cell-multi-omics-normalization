@@ -10,11 +10,24 @@ options(dyngen_download_cache_dir = "/vast/scratch/users/liu.ne/transformGamPoi_
 set.seed(seed)
 cat("Starting simulations for seed", seed, "\n")
 
+library(dyngen)
+library(SingleCellExperiment)
+library(Matrix)
+library(scDesign2)
+library(scRNAseq)
+library(scuttle)
+library(scran)
+library(matrixStats)
+library(muscat)
+library(dplyr)
+library(tidyr)
+library(SingleCellExperiment)
+source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/consistency_benchmark/download_helper.R")
+
+
 # ======================= scDesign2 Simulation =======================
 cat("[1/5] Starting scDesign2 simulation\n")
 start_time <- Sys.time()
-
-library(scDesign2)
 
 sce <- get_GSE130931_data()
 colData(sce)$cluster_id <- quickCluster(sce, min.size = 20)
@@ -61,11 +74,6 @@ cat("Finished scDesign2 in", round(difftime(end_time, start_time, units = "secs"
 cat("[2/5] Starting Dyngen simulation\n")
 start_time <- Sys.time()
 
-library(dyngen)
-library(SingleCellExperiment)
-library(Matrix)
-source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/consistency_benchmark/download_helper.R")
-
 num_cells <- 5000
 num_features <- 1000
 backbone <- backbone_consecutive_bifurcating()
@@ -103,11 +111,6 @@ cat("Finished Dyngen in", round(difftime(end_time, start_time, units = "secs")),
 # ======================= Linear Walk Simulation =======================
 cat("[3/5] Starting Linear Walk simulation\n")
 start_time <- Sys.time()
-
-library(scRNAseq)
-library(scuttle)
-library(scran)
-library(matrixStats)
 
 sce <- BaronPancreasData("human")
 sce <- logNormCounts(sce)
@@ -170,11 +173,6 @@ cat("Finished Linear Walk in", round(difftime(end_time, start_time, units = "sec
 # ======================= Muscat Simulation =======================
 cat("[4/5] Starting Muscat simulation\n")
 start_time <- Sys.time()
-
-library(muscat)
-library(dplyr)
-library(tidyr)
-library(SingleCellExperiment)
 
 data(example_sce)
 sce_preped <- prepSim(example_sce, verbose = FALSE)
