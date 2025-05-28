@@ -100,10 +100,10 @@ trans_families <- list(
   count_model = c(
     "glmpca", 
     "newwave"),
+  RUV = 'fastRUVIII',
   negative_control = c(
     "raw_counts", 
-    "scaled_raw_counts"),
-  RUV = 'fastRUVIII') %>%
+    "scaled_raw_counts")) %>%
   enframe() %>%
   unnest(value) %>%
   transmute(transformation = value, family = name)
@@ -223,7 +223,7 @@ param_grid <- crossing(
   #nn = knns
 )
 
-saveRDS(param_grid, file = "/home/users/allstaff/liu.ne/scMultiOmics-normalization/consistency_params.rds")
+saveRDS(param_grid, file = "/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts/consistency_params.rds")
 
 ```
 
@@ -311,11 +311,109 @@ future_lapply(seq_len(nrow(param_grid)), function(i) {
 
 
 
-# Calculate the overlaps
+# RUVIII Normalization (after the slurm script for generating simulation data has been run)
 ```{r}
-# Should have around 3870 results
 
+# REQUIRES MANUAL CHANGING AND EXPLORING CLUSTERS
+data_paths <- paste0("/vast/scratch/users/liu.ne/transformGamPoi_10x_data/", datasets)
+names(data_paths) <- datasets
 
+for (i in seq_along(data_paths)) {
+  cat("Loading dataset:", data_paths[i], "\n")
+  matrix <- readRDS(data_paths[[i]]) %>% as("dgCMatrix")
+  if(is.null(colnames(matrix))){colnames(matrix) <- seq_len(ncol(matrix))}
+
+  cat("Running HVG selection...\n")
+  hvgs <- Seurat::VST(matrix, nselect = 0.2 * nrow(matrix))
+  
+  cat("Running PCA/SVD...\n")
+  pca <- BiocSingular::runSVD(
+    t(matrix[hvgs$variable, ]), center = TRUE, scale = FALSE, 
+    BSPARAM = BiocSingular::bsparam(), k = 20
+  )
+
+  cat("Running UMAP...\n")
+  umap <- uwot::umap(pca$u, n_neighbors = 20, n_components = 3)
+
+  cat("Finding neighbors...\n")
+  neighbors <- Seurat::FindNeighbors(as(pca$u, 'dgCMatrix'), k.param = 20)
+  clusters <- Seurat::FindClusters(neighbors$snn, resolution = 0.5)
+
+  libsize <- log2(colSums(matrix))
+  
+  metadata <- data.frame(libsize = libsize, cluster = unlist(clusters))
+
+  cat("Creating PRPC structure...\n")
+  prpc <- fastRUVIII::CreatePRPC(
+    matrix, 
+    bio_vars = 'cluster', 
+    uv_vars = 'libsize', 
+    separate_bins_by_biology = TRUE,
+    group_by_vars = NA,
+    metadata = metadata
+  )
+
+  cat("Finding NCGs...\n")
+  ncgs <- fastRUVIII::FindNCG(
+    matrix, 
+    unwanted_variables = 'libsize', 
+    bio_variables = 'cluster', 
+    metadata = metadata, 
+    no.ncg = 0.1 * nrow(matrix)
+  )
+
+  for (k in c(1, 2)) {
+    cat("Running fastRUVIII with k =", k, "\n")
+    norm_data <- fastRUVIII::fastRUVIII(
+      matrix, 
+      k = k, 
+      replicates = prpc, 
+      control_genes = ncgs
+    )$newY %>% t()
+    
+    for (pc in pcs) {
+      for (nn in knns) {
+        cat("Computing KNN with PC =", pc, " and NN =", nn, "\n")
+        
+        first_gene_half <- sample(seq_len(nrow(norm_data)), round(nrow(norm_data) / 2))
+        second_gene_half <- setdiff(seq_len(nrow(norm_data)), first_gene_half)
+        norm_data_1 <- norm_data[first_gene_half, , drop = FALSE]
+        norm_data_2 <- norm_data[second_gene_half, , drop = FALSE]
+        
+        KNN_1 <- make_knn_graph("fastRUVIII", norm_data_1, pc, nn)
+        KNN_2 <- make_knn_graph("fastRUVIII", norm_data_2, pc, nn)
+        KNNs <- list(KNN_1, KNN_2)
+        
+        stopifnot(all(dim(KNNs[[1]]) == dim(KNNs[[2]])))  # Ensure KNNs is defined
+        n_cells <- nrow(KNNs[[1]])
+
+        cons <- mean(sapply(seq_len(n_cells), function(cell_idx) {
+          length(intersect(KNNs[[1]][cell_idx, ], KNNs[[2]][cell_idx, ]))
+        }))
+        
+        res <- tibble(
+          mean_overlap = cons, 
+          transformation_id = "fastRUVIII", 
+          dataset = names(data_paths[i]), 
+          seed = 1,
+          pca_dim = pc, 
+          knn = nn, 
+          transformation = "fastRUVIII", 
+          alpha = NA
+        )
+        
+        result_id <- paste0(names(data_paths[i]),"_fastRUVIII_k",k,"_pc:",pc,"_nn:",nn)
+
+        out_path <- paste0(
+          "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/knn_overlap_metrics/", 
+          result_id
+        )
+        cat("Saving results to", out_path, "\n")
+        write_tsv(res, out_path)
+      }
+    }
+  }
+}
 
 ```
 
@@ -323,9 +421,13 @@ future_lapply(seq_len(nrow(param_grid)), function(i) {
 ```{r}
 
 
-consistency_results <- paste0(
-  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/knn_overlap_metrics/",
-  read_lines("~/scMultiOmics-normalization/slurm_benchmarking_scripts/consistency_result_paths.txt"))
+# consistency_results <- paste0(
+#   "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/knn_overlap_metrics/",
+#   read_lines("~/scMultiOmics-normalization/slurm_benchmarking_scripts/consistency_result_paths.txt"))
+
+consistency_results <- list.files(
+  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/knn_overlap_metrics", 
+  full.names = TRUE)
 
 res <- lapply(consistency_results, function(res_id){
   res <- read_tsv(res_id, col_types = list(alpha = "character"), show_col_types = FALSE)
