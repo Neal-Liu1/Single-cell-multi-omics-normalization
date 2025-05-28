@@ -1,0 +1,280 @@
+---
+title: "Ahlmann-Eltze & Huber 2023 downsampling"
+output: html_document
+---
+
+```{r}
+library(SingleCellExperiment)
+library(tidyverse)
+library(fastRUVIII)
+source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/downsampling_benchmark/download_helper.R")
+source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/transformations/transformation_helper.R")
+
+```
+
+# Download the datasets
+```{r}
+
+# The EMBL links for smartSeq3 data are no longer available/moved. I had to manually hunt them down and copy the new link into the download helper functions file. 
+
+datasets <- c(
+  'mcSCRB', 
+  'smartSeq3_fibroblasts', 
+  'smartSeq3_fibroblasts_alt', 
+  'smartSeq3_hek', 
+  'smartSeq3_siRNA_knockdown'
+)
+
+for(dataset in datasets){
+  sce <- data_loaders[[dataset]]()
+  UMI <- as.matrix(assay(sce))
+
+  colsums <- colSums2(UMI)
+  downsample_proportion <- 5000 / median(colsums)
+  downsampled_UMI = as.matrix(scuttle::downsampleMatrix(UMI, prop = downsample_proportion, bycol = FALSE))
+
+  expressed_cells <- matrixStats::colSums2(downsampled_UMI) > 0
+  expressed_genes <- matrixStats::rowSums2(downsampled_UMI) > 0
+  UMI <- UMI[expressed_genes, expressed_cells]
+  downsampled_UMI <- downsampled_UMI[expressed_genes, expressed_cells]
+
+  saveRDS(list(full = UMI, reduced = downsampled_UMI), file.path("/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data", dataset))
+  }
+
+```
+
+# Setup parameters
+```{r}
+
+knns <- c(10, 20, 50)
+pcs <- c(5, 10, 50)
+data_paths <- paste0("/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data/", datasets) |> as.list()
+names(data_paths) <- datasets
+
+# Excluding Sanity (environment shenanigans because not implemented in R)
+transformations <- c(
+  "logp1", 
+  "logp1_hvg", 
+  "logp1_zscore", 
+  "logp1_hvg_zscore",
+  "logp_cpm", 
+  "logp1_size_normed", 
+  "acosh", 
+  "logp_alpha",
+  "pearson", 
+  "pearson_clip", 
+  "pearson_analytic", 
+  "sctransform",
+  "rand_quantile", 
+  "pearson_clip_hvg", 
+  "pearson_clip_zscore",
+  "pearson_clip_hvg_zscore", 
+  "normalisr_norm", 
+  #"sanity_map",
+  #"sanity_dists", 
+  #"glmpca", 
+  "raw_counts", 
+  "scaled_raw_counts"
+)
+
+
+trans_families <- list(
+  delta_method = c(
+    "logp1", 
+    "acosh", 
+    "logp_alpha", 
+    "logp_cpm", 
+    "logp1_size_normed", 
+    "logp1_hvg", 
+    "logp1_zscore",  
+    "logp1_hvg_zscore"),
+  glm_residual = c(
+    "pearson_clip", 
+    "sctransform", 
+    "pearson_analytic", 
+    "rand_quantile", 
+    "pearson",  
+    "pearson_clip_hvg", 
+    "pearson_clip_zscore", 
+    "pearson_clip_hvg_zscore"),
+  latent_expr = c(
+    "sanity_map", 
+    "sanity_dists", 
+    "dino", 
+    "normalisr_norm"),
+  count_model = c(
+    "glmpca", 
+    "newwave"),
+  negative_control = c(
+    "raw_counts", 
+    "scaled_raw_counts"),
+  RUV = 'fastRUVIII') %>%
+  enframe() %>%
+  unnest(value) %>%
+  transmute(transformation = value, family = name)
+
+alphas <- list(
+  logp1 = FALSE,
+  logp1_hvg = FALSE,
+  logp1_zscore = FALSE,
+  logp1_hvg_zscore = FALSE,
+  logp_cpm = FALSE,
+  logp1_size_normed = FALSE,
+  acosh = TRUE,
+  logp_alpha = TRUE,
+  pearson = TRUE,
+  pearson_clip = TRUE,
+  pearson_clip_hvg = TRUE,
+  pearson_clip_zscore = TRUE,
+  pearson_clip_hvg_zscore = TRUE,
+  pearson_analytic = TRUE,
+  sctransform = TRUE,
+  rand_quantile = TRUE,
+  normalisr_norm = FALSE,
+  sanity_map = FALSE,
+  sanity_dists = FALSE,
+  glmpca = FALSE,
+  raw_counts = FALSE,
+  scaled_raw_counts = FALSE
+)
+
+
+param_grid <- crossing(
+  data = datasets,
+  trans = transformations,
+  mode = c("full", "reduced")
+)
+
+saveRDS(param_grid, "/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts/downsampling_params.rds")
+
+```
+
+# Run the slurm script that we prepared separately.
+```{r}
+
+system("sbatch /home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts/transform_downsampling_data.sh")
+
+```
+
+# Compute 'reliable KNN' (as coined in their paper) and overlaps
+```{r}
+full_knn_result_paths <- list()
+for(dataset in datasets){
+full_knn_result_paths[[dataset]] <- list.files(
+  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/full_knns", 
+  pattern = dataset, 
+  full.names = TRUE
+)}
+
+reduced_knn_result_paths <- list()
+for(dataset in datasets){
+reduced_knn_result_paths[[dataset]] <- list.files(
+  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/reduced_knns", 
+  pattern = dataset, 
+  full.names = TRUE
+)}
+
+full_knn_result_paths$smartSeq3_fibroblasts <- full_knn_result_paths$smartSeq3_fibroblasts[-grep(
+  "_alt", full_knn_result_paths$smartSeq3_fibroblasts)]
+reduced_knn_result_paths$smartSeq3_fibroblasts <- reduced_knn_result_paths$smartSeq3_fibroblasts[-grep(
+  "_alt", reduced_knn_result_paths$smartSeq3_fibroblasts)]
+
+
+for(dataset in names(full_knn_result_paths)){
+  for(pc in pcs){
+    for(nn in knns){
+    
+    paths <- full_knn_result_paths[[dataset]][grepl(paste0("_pc:",pc,"_nn:",nn),full_knn_result_paths[[dataset]])]
+    paths <- paths[-grepl("raw_counts",paths)]
+    
+    full_KNNs <- lapply(paths, function(id) readRDS(id))
+    # names(full_KNNs) <- list.files(
+    #   "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/full_knns", 
+    #   pattern = dataset, 
+    #   full.names = FALSE
+    #   )
+    # 
+    # # Filter out negative controls
+    # full_KNNs <- full_KNNs[-grep("raw_counts",names(full_KNNs))]
+    
+    paths <- reduced_knn_result_paths[[dataset]][grepl(paste0("_pc:",pc,"_nn:",nn),reduced_knn_result_paths[[dataset]])]
+    paths <- paths[-grepl("raw_counts",paths)]
+    reduced_KNNs <- lapply(paths, function(id) readRDS(id))
+    
+    # names(reduced_KNNs) <- list.files(
+    #   "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/reduced_knns", 
+    #   pattern = dataset, 
+    #   full.names = FALSE
+    #   )
+    
+    stopifnot(nrow(full_KNNs[[1]]) == sapply(full_KNNs, nrow))
+    stopifnot(ncol(full_KNNs[[1]]) == sapply(full_KNNs, ncol))
+    stopifnot(nrow(full_KNNs[[1]]) == sapply(reduced_KNNs, nrow))
+    stopifnot(ncol(full_KNNs[[1]]) == sapply(reduced_KNNs, ncol))
+    
+    n_cells <- nrow(full_KNNs[[1]])
+    
+    # Nearest neighbors found with all transformations
+    common_knns <- lapply(seq_len(n_cells), function(idx){
+      merged_nn <- lapply(full_KNNs, function(knn) knn[idx, ])
+      purrr::reduce(merged_nn, intersect)
+    })
+    n_common_knns <- lengths(common_knns)
+    
+    overlapping_knns_per_trans <- vapply(reduced_KNNs, function(knn){
+      overlap <- sapply(seq_len(n_cells), function(idx){
+        com_knn <- common_knns[[idx]]
+        sum(knn[idx, ] %in% com_knn) 
+      })
+      mean(overlap[n_common_knns > 1])
+    }, numeric(1L))
+    
+    res <- tibble(
+      overlap = overlapping_knns_per_trans, 
+      transformation_full_data_ids = NA, 
+      transformation_reduced_data_ids = NA, 
+      dataset = dataset, 
+      seed = 1, 
+      pca_dim = pc, 
+      knn = nn, 
+      transformation = NA, 
+      alpha = NA)
+    
+    result_id <- paste0(dataset,"_pc:",pc,"_nn:",nn)
+    
+    write_tsv(res, file.path("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results", result_id))
+      
+    }
+  }
+}
+
+
+```
+
+
+```{r}
+
+        transformations_sorted <- transformations[order(nchar(transformations), decreasing = TRUE)]
+        transformation <- transformations_sorted[which.max(str_detect(result_id, fixed(transformations_sorted)))]
+
+        res <- tibble(
+          mean_overlap = cons, 
+          transformation_id = result_id, 
+          dataset = str_extract(result_id, "^GSE\\d+"), 
+          seed = 1,
+          pca_dim = str_extract(result_id, "(?<=pc:)\\d+"), 
+          knn = str_extract(result_id, "(?<=nn:)\\d+"), 
+          transformation = transformation, 
+          alpha = str_extract(result_id, "(?<=alpha:)\\d*\\.?\\d+")
+        )
+
+
+
+```
+
+
+
+
+
+
+
