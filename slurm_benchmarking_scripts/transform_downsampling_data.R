@@ -3,6 +3,7 @@ source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_P
 args <- commandArgs(trailingOnly = TRUE)
 i <- as.integer(args[1])
 message(Sys.time(), " - Starting task for param_grid row: ", i)
+set.seed(1)
 
 param_grid <- readRDS("/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts/downsampling_params.rds")
 row <- param_grid[i, ]
@@ -19,8 +20,8 @@ data_dir <- "/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data"
 
 message(Sys.time(), " - Data: ", data, " | Transformation: ", trans, " | Mode: ", mode)
 
-knns <- c(10, 20, 50)
-pcs <- c(5, 10, 50)
+knns <- c(10, 50, 100)
+pcs <- c(5, 10, 50, 100)
 
 alphas <- list(
   logp1 = FALSE,
