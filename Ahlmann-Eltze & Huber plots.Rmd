@@ -408,6 +408,8 @@ ggsave(
   compression = "lzw"          # (for TIFF to reduce file size)
 )
 
+p
+
 ```
 
 # Clustering metrics for simulation
@@ -447,11 +449,13 @@ sim_res_main <- bind_rows(
 gradient_palette <- colorRampPalette(c("#e7ebf7", "#90add9"))
 colors <- gradient_palette(length(unique(res$transformation)))
 
-plot_boxplot_categorical <- function(data_vector, category_vector, names,
-                                     aspect_ratio = 1.3,
-                                     highlight = "fastRUVIII",
-                                     highlight_color = "tomato",
-                                     palette = NULL) {
+plot_boxplot_categorical <- function(
+    data_vector, category_vector, names,
+    aspect_ratio = 1.3,
+    highlight = "fastRUVIII",
+    highlight_color = "tomato",
+    palette = NULL) {
+  
   # Build dataframe
   data <- data.frame(value = data_vector, category = category_vector)
   colnames(data) <- names
@@ -495,25 +499,29 @@ plot_boxplot_categorical <- function(data_vector, category_vector, names,
 
 
 
-plot_boxplot_categorical(
+p1 <- plot_boxplot_categorical(
   sim_res_main$ARI,
   sim_res_main$transformation,
   names = c("Adjusted Rand Index", "Transformation"),
   highlight = "fastRUVIII",
   highlight_color = "#f7d379",
-  palette = colors
+  palette = colors,
+  aspect_ratio = 2
 )
 
-plot_boxplot_categorical(
+p2 <- plot_boxplot_categorical(
   sim_res_main$AMI,
   sim_res_main$transformation,
   names = c("Adjusted Mutual Information", "Transformation"),
   highlight = "fastRUVIII",
   highlight_color = "#f7d379",
-  palette = colors
+  palette = colors,
+  aspect_ratio = 2
 )
 
-
+gridExtra::grid.arrange(p1,p2, ncol= 2)
+save_plot(p1, "ARI_barplot", width = 10,height= 5)
+save_plot(p2, "AMI_barplot", width = 10,height= 5)
 
 ```
 
@@ -572,21 +580,45 @@ single_trend <- function(sim_name, metric = c("ARI","AMI")) {
 ```
  
  
-```{r}
-single_trend("Dyngen", "ARI")
-single_trend("Muscat", "ARI")
-single_trend("Linearwalk", "ARI")
-single_trend("Randomwalk", "ARI")
-single_trend("scDesign", "ARI")
+```{r, fig.width= 6, fig.height= 6}
+p1 <- single_trend("Dyngen", "ARI") + theme(aspect.ratio = 0.9)
+p2 <- single_trend("Muscat", "ARI")+ theme(aspect.ratio = 0.9)
+p3 <- single_trend("Linearwalk", "ARI")+ theme(aspect.ratio = 0.9)
+p4 <- single_trend("Randomwalk", "ARI")+ theme(aspect.ratio = 0.9)
+p5 <- single_trend("scDesign", "ARI")+ theme(aspect.ratio = 0.9)
+
+p1
+p2
+p3
+p4
+p5
+
+save_plot(p1, name = "Dyngen_ari_correl", width = 6, height = 6)
+save_plot(p2, name = "Muscat_ari_correl", width = 6, height = 6)
+save_plot(p3, name = "Linearwalk_ari_correl", width = 6, height = 6)
+save_plot(p4, name = "Randomwalk_ari_correl", width = 6, height = 6)
+save_plot(p5, name = "scDesign_ari_correl", width = 6, height = 6)
 
 ```
 
-```{r}
-single_trend("Dyngen", "AMI")
-single_trend("Muscat", "AMI")
-single_trend("Linearwalk", "AMI")
-single_trend("Randomwalk", "AMI")
-single_trend("scDesign", "AMI")
+```{r, fig.width= 6, fig.height= 6}
+p1 <- single_trend("Dyngen", "AMI") + theme(aspect.ratio = 0.9)
+p2 <- single_trend("Muscat", "AMI")+ theme(aspect.ratio = 0.9)
+p3 <- single_trend("Linearwalk", "AMI")+ theme(aspect.ratio = 0.9)
+p4 <- single_trend("Randomwalk", "AMI")+ theme(aspect.ratio = 0.9)
+p5 <- single_trend("scDesign", "AMI")+ theme(aspect.ratio = 0.9)
+
+p1
+p2
+p3
+p4
+p5
+
+save_plot(p1, name = "Dyngen_ami_correl", width = 6, height = 6)
+save_plot(p2, name = "Muscat_ami_correl", width = 6, height = 6)
+save_plot(p3, name = "Linearwalk_ami_correl", width = 6, height = 6)
+save_plot(p4, name = "Randomwalk_ami_correl", width = 6, height = 6)
+save_plot(p5, name = "scDesign_ami_correl", width = 6, height = 6)
 
 ```
 
@@ -683,5 +715,130 @@ linearwalk_pl
 randomwalk_pl
 scdesign_pl
 
+save_plot(dyngen_pl, name = "Dyngen_overlaps", width = 5, height = 6)
+save_plot(muscat_pl, name = "Muscat_overlaps", width = 5, height = 6)
+save_plot(linearwalk_pl, name = "Linearwalk_overlaps", width = 5, height = 6)
+save_plot(randomwalk_pl, name = "Randomwalk_overlaps", width = 5, height = 6)
+save_plot(scdesign_pl, name = "scDesign_overlaps", width = 5, height = 6)
+
 ```
+
+
+# tSNEs of the simulated data
+```{r}
+
+sim_paths <- list.files(
+  path = "/vast/scratch/users/liu.ne/transformGamPoi_simulation_data", 
+  pattern = "seed_1.rds", full.names = T) %>% as.list()
+
+names(sim_paths) <- list.files(
+  path = "/vast/scratch/users/liu.ne/transformGamPoi_simulation_data", 
+  pattern = "seed_1.rds", full.names = F) %>% 
+  sub(pattern = "_seed_1.rds", replacement = "")
+
+tsnes <- list()
+
+for(dataset in names(sim_paths)){
+ground_truth <- readRDS(sim_paths[[dataset]])$ground_truth
+counts <- readRDS(sim_paths[[dataset]])$UMI
+
+sf <- MatrixGenerics::colSums2(counts)
+sf <- sf / mean(sf)
+log_counts <- logp1_fnc(counts, sf, alpha = FALSE)
+pca_log_counts <- BiocSingular::runPCA(t(log_counts), rank = 2, get.rotation = FALSE, BSPARAM = BiocSingular::FastAutoParam())$x
+
+pca_gt <- scater::calculatePCA(ground_truth, ncomponents = 10)
+tsne_gt <- scater::calculateTSNE(ground_truth)
+tsne_log_counts <- scater::calculateTSNE(log_counts)
+
+clustering <- bluster::clusterRows(t(ground_truth), bluster::KNNGraphParam(), full = TRUE)
+
+if(length(unique(clustering$clusters)) > 15){
+  clusters <- bluster::mergeCommunities(clustering$objects$graph, clustering$clusters, number = 15)
+}else{
+  clusters <- clustering$clusters
+}
+
+tsnes[[dataset]] <- list(
+  pca_groundtruth = pca_gt, 
+  tsne_groudtruth = tsne_gt, 
+  tsne_log_counts = tsne_log_counts, 
+  clustering = clustering)
+}
+
+
+```
+
+
+```{r, fig.width= 4, fig.height=4}
+
+plot_tsne <- function(tsne_list, dataset, embedding = "tsne_log_counts") {
+  stopifnot(dataset %in% names(tsne_list))
+  x <- tsne_list[[dataset]]
+  tsne <- x[[embedding]]
+  cl   <- if (!is.null(x$clustering$clusters)) as.factor(x$clustering$clusters) else NULL
+
+  df <- data.frame(TSNE1 = tsne[,1], TSNE2 = tsne[,2], cluster = cl)
+
+  ggplot(df, aes(TSNE1, TSNE2, color = cluster)) +
+    geom_point(size = 0.6, alpha = 0.8) +
+    theme_minimal() +
+    theme(axis.text = element_blank(), 
+          axis.ticks = element_blank(),
+          axis.title = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          aspect.ratio = 1,
+          legend.position = 'none',
+          axis.line = element_line(colour = 'grey50', linewidth = 0.3)) +
+    labs(title = dataset,
+         color = if (is.null(cl)) NULL else "Cluster")
+}
+
+p1 <- plot_tsne(tsnes, "Dyngen")
+p2 <- plot_tsne(tsnes, "Muscat")
+p3 <- plot_tsne(tsnes, "Linearwalk")
+p4 <- plot_tsne(tsnes, "Randomwalk")
+p5 <- plot_tsne(tsnes, "scDesign")
+
+p1
+p2
+p3
+p4
+p5
+
+save_plot(p1, name = "Dyngen_tsne", width = 4, height = 4)
+save_plot(p2, name = "Muscat_tsne", width = 4, height = 4)
+save_plot(p3, name = "Linearwalk_tsne", width = 4, height = 4)
+save_plot(p4, name = "Randomwalk_tsne", width = 4, height = 4)
+save_plot(p5, name = "scDesign_tsne", width = 4, height = 4)
+
+```
+
+# Also plot ground truths
+```{r, fig.width= 4, fig.height=4}
+
+p1 <- plot_tsne(tsnes, "Dyngen",embedding = "tsne_groudtruth")
+p2 <- plot_tsne(tsnes, "Muscat", embedding = "tsne_groudtruth")
+p3 <- plot_tsne(tsnes, "Linearwalk", embedding = "tsne_groudtruth")
+p4 <- plot_tsne(tsnes, "Randomwalk",embedding = "tsne_groudtruth")
+p5 <- plot_tsne(tsnes, "scDesign", embedding = "tsne_groudtruth")
+
+p1
+p2
+p3
+p4
+p5
+
+save_plot(p1, name = "Dyngen_tsne_gt", width = 4, height = 4)
+save_plot(p2, name = "Muscat_tsne_gt", width = 4, height = 4)
+save_plot(p3, name = "Linearwalk_tsne_gt", width = 4, height = 4)
+save_plot(p4, name = "Randomwalk_tsne_gt", width = 4, height = 4)
+save_plot(p5, name = "scDesign_tsne_gt", width = 4, height = 4)
+
+```
+
+
+
+
 
