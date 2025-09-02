@@ -62,14 +62,13 @@ sf <- MatrixGenerics::colSums2(UMI)
 sf <- sf / mean(sf)
 
 for (alpha in current_alphas) {
+  trans_dat <- all_transformations[[trans]](UMI, sf, alpha)
   for (pc in pcs) {
     for (nn in knns) {
       cat(">> Transform:", trans, "| Alpha:", alpha, "| PC:", pc, "| KNN:", nn, "\n")
-      duration <- system.time({
-        trans_dat <- all_transformations[[trans]](UMI, sf, alpha)
-        KNN <- make_knn_graph(trans, trans_dat, pc, nn)
-      })
-      cat("Completed in", round(duration[3], 2), "seconds\n")
+      time1 <- Sys.time()
+      KNN <- make_knn_graph(trans, trans_dat, pc, nn)
+      cat("Completed in", Sys.time() - time1 , "seconds\n")
       result_id <- paste0(data, "_", trans, "_alpha:", alpha, "_pc:", pc, "_nn:", nn)
       saveRDS(KNN, file.path(output_dir, result_id))
     }
