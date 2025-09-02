@@ -140,7 +140,23 @@ sim_params <- tidyr::crossing(
 
 ```
 
-# Now run the slurm jobs
+# Now generate the data via slurm jobs
+# This might take a few hours!
+```{r}
+setwd("/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts")
+system("sbatch generate_simulation_data.sh")
+
+```
+
+# Now compute the transformations
+```{r}
+setwd("/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts")
+system("sbatch transform_simulated_data.sh")
+system("squeue -u liu.ne")
+system("sacct -j 23597532")
+
+```
+
 # Calculate KNNs after running the slurm jobs
 ```{r}
 library(stringr)
@@ -176,10 +192,18 @@ saveRDS(
 
 ```
 
+# Compute the KNN overlaps
+# This might take 24+ hours!!!
+```{r}
+setwd("/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts")
+system("sbatch calculate_simulation_overlaps.sh")
+system("squeue -u liu.ne")
+system("sacct -j 23608204")
+
+```
 
 
-
-# RUVIII Normalization (after the slurm script for generating simulation data has been run)
+# RUVIII Exploration
 ```{r}
 
 cluster_res <- c(0.1, 0.5, 1)
@@ -224,98 +248,17 @@ plotly::plot_ly(
 ```
 
 # RUVIII normalization
+# again this might take many hours
 ```{r}
-libsize <- log2(colSums(matrix))
-metadata <- data.frame(libsize = libsize, cluster = unlist(clusters))
-k <- c(1,2)
-
-prpc <- fastRUVIII::CreatePRPC(
-  matrix, 
-  bio_vars = 'cluster', 
-  uv_vars = 'libsize', 
-  separate_bins_by_biology = T,
-  group_by_vars = NA,
-  metadata = metadata)
-
-ncgs <- fastRUVIII::FindNCG(
-  matrix, 
-  unwanted_variables = 'libsize', 
-  bio_variables = 'cluster', 
-  metadata = metadata, 
-  no.ncg = 0.1 * nrow(matrix))
-
-ground_truth <- ground_truth_data$ground_truth
-
-for(k in k){
-norm_data <- fastRUVIII::fastRUVIII(
-  matrix, 
-  k= k, 
-  replicates = prpc, 
-  control_genes = ncgs)$newY %>% t()
-
-for(pc in pcs){
-  for(nn in knns){
-    
-knn <- make_knn_graph("fastRUVIII", dat =  norm_data, pca_dim = pc, k_nearest_neighbors = nn)
-
-ground_truth_knn <- BiocNeighbors::findAnnoy(
-    t(ground_truth),
-    k = nn,
-    warn.ties = FALSE,
-    get.distance = FALSE
-  )$index
-  
-knn_overlap <- mean(sapply(seq_len(nrow(knn)), function(cell_idx) {
-    length(intersect(ground_truth_knn[cell_idx, ], knn[cell_idx, ]))
-  }))
-  
-ground_truth_knn_graph <- bluster::neighborsToKNNGraph(ground_truth_knn)
-ground_truth_clustering_obj <- igraph::cluster_walktrap(ground_truth_knn_graph)
-ground_truth_clustering <- factor(igraph::membership(ground_truth_clustering_obj))
-n_clusters <- length(levels(ground_truth_clustering))
-message("  Ground truth clusters: ", n_clusters)
-  
-knn_graph <- bluster::neighborsToKNNGraph(knn)
-tmp_clustering_obj <- igraph::cluster_walktrap(knn_graph)
-cluster_assignment <- factor(igraph::membership(tmp_clustering_obj))
-n_clusters_counts <- length(levels(cluster_assignment))
-message("  Clusters found: ", n_clusters_counts)
-  
-ARI <- aricode::ARI(ground_truth_clustering, cluster_assignment)
-AMI <- aricode::AMI(ground_truth_clustering, cluster_assignment)
-NMI <- aricode::NMI(ground_truth_clustering, cluster_assignment)
-  
-res <- tibble(
-    ARI = ARI,
-    AMI = AMI,
-    NMI = NMI,
-    mean_knn_overlap = knn_overlap,
-    n_clusters = n_clusters,
-    n_clusters_counts = n_clusters_counts,
-    simulator = simulation, 
-    seed = seed, 
-    pca_dim = pc,
-    knn = nn,
-    transformation = "fastRUVIII",
-    alpha = FALSE
-  )
-  
-  out_path <- file.path(
-    "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/knn_overlap_metrics",
-    paste0(simulation, "_seed_",seed,"_fastRUVIII_k", k,"_pc:",pc,"_nn:",nn,".tsv")
-  )
-  
-  write_tsv(res, out_path)
-}
-}}
-
-
+setwd("/home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts")
+system("sbatch run_fastRUVIII_simulation.sh")
+system("squeue -u liu.ne")
+system("sacct -j 23606587")
 
 ```
 
 # Bind the final result tsv
 ```{r}
-
 
 result_paths <- list.files(
   "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/knn_overlap_metrics/", 
@@ -328,21 +271,22 @@ res <- lapply(result_paths, function(res_id){
   bind_rows()
 
 write_tsv(res, "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/final_metrics.tsv")
-
+res <- read_tsv("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/final_metrics.tsv")
 
 
 ```
 
 # Filtering
-```{r}
+```{r,fig.width= 5, fig.height= 6}
 
 res_main <- res %>%
-  filter(alpha %in% c("1", NA, "TRUE", "FALSE")) %>%
+  filter(alpha %in% c("1","0", "TRUE", "FALSE", 1, NA, 0)) %>%
   #filter(seed %in% 1:5) %>%
-  #filter(simulator %in% "Linearwalk") %>%
+  #filter(simulator %in% c("Linearwalk")) %>%
   #filter(pca_dim == 10) %>%
-  #filter(knn %in% 10)
+  filter(knn %in% 50) %>%
   mutate(knn_recovery = mean_knn_overlap / knn) %>%
+  group_by(simulator, seed, knn) %>%
   mutate(knn_recovery = knn_recovery / mean(knn_recovery)) %>%
   tidylog::left_join(trans_families)
 
@@ -359,7 +303,7 @@ p <- ggplot(res_main, aes(x = knn_recovery, y = transformation)) +
   ) +
   geom_vline(xintercept = 1, linetype = "dashed", color = "grey40") +
   scale_x_continuous(name = "Relative k-NN overlap", breaks = c(0.5, 1, 1.5)) +
-  #coord_cartesian(xlim = c(0, 2)) +
+  coord_cartesian(xlim = c(0, 2)) +
   scale_color_brewer(palette = "Dark2") +
   theme_minimal(base_size = 10) +
   theme(
@@ -376,11 +320,6 @@ p <- ggplot(res_main, aes(x = knn_recovery, y = transformation)) +
 p
 
 ```
-
-
-
-
-
 
 
 
