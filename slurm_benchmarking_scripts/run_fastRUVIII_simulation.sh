@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
 #SBATCH --mem=50G
-#SBATCH --time=08:00:00
+#SBATCH --time=012:00:00
 #SBATCH --array=1-75
 
 module load R/4.4.1
