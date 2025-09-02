@@ -4,9 +4,9 @@
 #SBATCH --error=/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/logs/errors/%A_%a.err
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
-#SBATCH --mem=40G
-#SBATCH --time=09:00:00
-#SBATCH --array=1-190
+#SBATCH --mem=30G
+#SBATCH --time=05:00:00
+#SBATCH --array=1-950
 
 module load R/4.4.1
-Rscript transform_downsampling_data.R $SLURM_ARRAY_TASK_ID
+Rscript /home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts/transform_downsampling_data.R $SLURM_ARRAY_TASK_ID
