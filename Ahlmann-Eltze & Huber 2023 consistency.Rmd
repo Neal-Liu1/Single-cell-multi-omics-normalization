@@ -31,7 +31,7 @@ message("Getting ", dataset)
 sce <- data_loaders[[dataset]]()
 UMI <- as.matrix(assay(sce))
 
-saveRDS(UMI, file.path("/vast/scratch/users/liu.ne/transformGamPoi_10x_data",dataset))
+saveRDS(UMI, file.path("/vast/scratch/users/liu.ne/transformGamPoi_10x_data",paste0(dataset,'.rds')))
 }
 
 ```
@@ -436,6 +436,7 @@ res <- lapply(consistency_results, function(res_id){
   bind_rows()
 
 write_tsv(res, "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/final_metrics.tsv")
+res <- read_tsv("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/final_metrics.tsv")
 
 
 
@@ -457,7 +458,7 @@ res_main <- res %>%
 
 
 # Plot results
-```{r}
+```{r, fig.width= 5, fig.height= 6}
 
 p <- ggplot(res_main, aes(x = knn_recovery, y = transformation)) +
   # Grey points
@@ -486,6 +487,7 @@ p <- ggplot(res_main, aes(x = knn_recovery, y = transformation)) +
   theme(strip.text.y.left = element_blank())
 
 p
+save_plot("consistency_plot", p, base_asp = 5/6)
 
 ```
 
