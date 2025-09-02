@@ -7,15 +7,12 @@ output: html_document
 library(SingleCellExperiment)
 library(tidyverse)
 library(fastRUVIII)
+library(ggplot2)
+library(ggbeeswarm)
+library(ggh4x)
+library(dplyr)
 source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/downsampling_benchmark/download_helper.R")
 source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/transformations/transformation_helper.R")
-
-```
-
-# Download the datasets
-```{r}
-
-# The EMBL links for smartSeq3 data are no longer available/moved. I had to manually hunt them down and copy the new link into the download helper functions file. 
 
 datasets <- c(
   'mcSCRB', 
@@ -25,29 +22,58 @@ datasets <- c(
   'smartSeq3_siRNA_knockdown'
 )
 
+```
+
+# Download the datasets
+```{r}
+
+# The EMBL links for smartSeq3 data are no longer available/moved. I had to manually hunt them down and copy the new link into the download helper functions file. 
+
+# You might need to manually go on the EMBL website and hand download them
+# https://www.ebi.ac.uk/biostudies/ArrayExpress/studies/E-MTAB-10148?query=E-MTAB-10148#processed-data
+
+seeds <- c(1,2,3,4,5)
+
 for(dataset in datasets){
   sce <- data_loaders[[dataset]]()
   UMI <- as.matrix(assay(sce))
-
+  if(dataset %in% c('smartSeq3_fibroblasts', 'smartSeq3_fibroblasts_alt')){
+    # One gene has NAs.
+    # Im not even sure if they realized this in the publication because the benchmarks still run with the NAs
+    # But with the NAs the downsample will silently fail, and you'll be comparing to identical full matrices!
+    UMI <- UMI[!rownames(UMI) %in% c("ENSMUSG00000111059","ENSMUSG00000036046"),]
+  }
   colsums <- colSums2(UMI)
   downsample_proportion <- 5000 / median(colsums)
-  downsampled_UMI = as.matrix(scuttle::downsampleMatrix(UMI, prop = downsample_proportion, bycol = FALSE))
-
-  expressed_cells <- matrixStats::colSums2(downsampled_UMI) > 0
-  expressed_genes <- matrixStats::rowSums2(downsampled_UMI) > 0
-  UMI <- UMI[expressed_genes, expressed_cells]
-  downsampled_UMI <- downsampled_UMI[expressed_genes, expressed_cells]
-
-  saveRDS(list(full = UMI, reduced = downsampled_UMI), file.path("/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data", dataset))
+  for(seed in seeds){
+    set.seed(seed)
+    downsampled_UMI = as.matrix(scuttle::downsampleMatrix(UMI, prop = downsample_proportion, bycol = FALSE))
+    expressed_cells <- matrixStats::colSums2(downsampled_UMI) > 0
+    expressed_genes <- matrixStats::rowSums2(downsampled_UMI) > 0
+    UMI <- UMI[expressed_genes, expressed_cells]
+    downsampled_UMI <- downsampled_UMI[expressed_genes, expressed_cells]
+    saveRDS(
+      list(full = UMI, reduced = downsampled_UMI), 
+      file.path("/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data", paste0(dataset,"_seed:",seed)))
   }
+}
+
+# smartSeq3_fibroblasts, smartSeq3_fibroblasts_alt, 
+# test <- readRDS("/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data/smartSeq3_fibroblasts_seed:2")
+# test <- readRDS("/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data/smartSeq3_fibroblasts_alt_seed:1")
 
 ```
 
 # Setup parameters
 ```{r}
 
-knns <- c(10, 20, 50)
-pcs <- c(5, 10, 50)
+knns <- c(10, 50, 100)
+pcs <- c(5, 10, 50, 100)
+datasets <- paste0(
+  rep(datasets, each = length(seeds)),
+  "_seed:", 
+  rep(seeds, times = length(datasets)))
+
 data_paths <- paste0("/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data/", datasets) |> as.list()
 names(data_paths) <- datasets
 
@@ -108,7 +134,7 @@ trans_families <- list(
   negative_control = c(
     "raw_counts", 
     "scaled_raw_counts"),
-  RUV = 'fastRUVIII') %>%
+  RUV = c('fastRUVIII_k:1', 'fastRUVIII_k:2', "fastRUVIII")) %>%
   enframe() %>%
   unnest(value) %>%
   transmute(transformation = value, family = name)
@@ -153,11 +179,147 @@ saveRDS(param_grid, "/home/users/allstaff/liu.ne/scMultiOmics-normalization/slur
 ```{r}
 
 system("sbatch /home/users/allstaff/liu.ne/scMultiOmics-normalization/slurm_benchmarking_scripts/transform_downsampling_data.sh")
+system("squeue -u liu.ne")
 
 ```
 
+
+# RUVIII normalization
+```{r}
+
+data_paths <- paste0(
+  "/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data/",
+  datasets
+)
+names(data_paths) <- datasets
+
+# avoid shadowing with the inner loop
+ks       <- c(1)
+clust_res <- c(1.5)
+
+for (i in seq_along(data_paths)) {
+  dataset  <- names(data_paths)[i]
+  data_rds <- data_paths[[i]]
+
+  for (mode in c("full", "reduced")) {
+    cat("Loading dataset:", data_rds, "(", mode, ")\n")
+    mat_list <- readRDS(data_rds)
+    matrix   <- mat_list[[mode]]
+    
+    expressed_cells <- matrixStats::colSums2(matrix) > 0
+    expressed_genes <- matrixStats::rowSums2(matrix) > 0
+    matrix <- matrix[expressed_genes, expressed_cells] %>% as("dgCMatrix")
+
+    # choose the right output folder
+    output_dir <- if (mode == "full") {
+      "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/full_knns"
+    } else {
+      "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/reduced_knns"
+    }
+
+    # give columns names if missing
+    if (is.null(colnames(matrix))) {
+      colnames(matrix) <- seq_len(ncol(matrix))
+    }
+
+    cat("Running HVG selection...\n")
+    hvgs <- Seurat::VST(matrix, nselect = 0.2 * nrow(matrix))
+
+    cat("Running PCA/SVD...\n")
+    pca <- BiocSingular::runSVD(
+      t(matrix[hvgs$variable, ]), 
+      center = TRUE, scale = FALSE, 
+      BSPARAM = BiocSingular::bsparam(), 
+      k = 30
+    )
+
+    cat("Finding neighbors...\n")
+    neighbors <- Seurat::FindNeighbors(
+      as(pca$u, "dgCMatrix"), 
+      k.param = 20
+    )
+
+    for (res in clust_res) {
+      clusters <- Seurat::FindClusters(
+        neighbors$snn, 
+        resolution = res
+      )
+
+      libsize  <- log2(colSums(matrix))
+      metadata <- data.frame(
+        libsize = libsize,
+        cluster = unlist(clusters)
+      )
+
+      cat("Creating PRPC structure...\n")
+      prpc <- fastRUVIII::CreatePRPC(
+        matrix, 
+        bio_vars = "cluster", 
+        uv_vars = "libsize", 
+        separate_bins_by_biology = TRUE,
+        group_by_vars = NA,
+        metadata = metadata
+      )
+
+      cat("Finding NCGs...\n")
+      ncgs <- fastRUVIII::FindNCG(
+        matrix, 
+        unwanted_variables = "libsize", 
+        bio_variables = "cluster", 
+        metadata = metadata, 
+        no.ncg = 0.1 * nrow(matrix)
+      )
+
+      # inner loop over k values
+      for (k_val in ks) {
+        cat("Running fastRUVIII with k =", k_val, "\n")
+        norm_data <- fastRUVIII::fastRUVIII(
+          matrix, 
+          k          = k_val, 
+          replicates = prpc, 
+          control_genes = ncgs
+        )$newY %>%
+          t()
+
+        # loop over your predefined pc & knn vectors
+        for (pc in pcs) {
+          for (nn in knns) {
+            cat("Computing KNN with PC =", pc, "and NN =", nn, "\n")
+            KNN <- make_knn_graph("fastRUVIII", norm_data, pc, nn)
+
+            # use `dataset` here instead of undefined `data`
+            result_id <- paste0(
+              dataset,
+              "_fastRUVIII",
+              "_alpha:FALSE",
+              "_pc:",        pc,
+              "_nn:",        nn
+            )
+
+            saveRDS(
+              KNN,
+              file.path(output_dir, result_id)
+            )
+            message(
+              Sys.time(),
+              " - Saved result to: ",
+              file.path(output_dir, result_id)
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+
+```
+
+
+
 # Compute 'reliable KNN' (as coined in their paper) and overlaps
 ```{r}
+
 full_knn_result_paths <- list()
 for(dataset in datasets){
 full_knn_result_paths[[dataset]] <- list.files(
@@ -174,38 +336,24 @@ reduced_knn_result_paths[[dataset]] <- list.files(
   full.names = TRUE
 )}
 
-full_knn_result_paths$smartSeq3_fibroblasts <- full_knn_result_paths$smartSeq3_fibroblasts[-grep(
-  "_alt", full_knn_result_paths$smartSeq3_fibroblasts)]
-reduced_knn_result_paths$smartSeq3_fibroblasts <- reduced_knn_result_paths$smartSeq3_fibroblasts[-grep(
-  "_alt", reduced_knn_result_paths$smartSeq3_fibroblasts)]
-
-
 for(dataset in names(full_knn_result_paths)){
   for(pc in pcs){
     for(nn in knns){
-    
-    paths <- full_knn_result_paths[[dataset]][grepl(paste0("_pc:",pc,"_nn:",nn),full_knn_result_paths[[dataset]])]
-    paths <- paths[-grepl("raw_counts",paths)]
+    seed <- sub(".*_seed:([0-9]+).*", "\\1", dataset)
+    paths <- full_knn_result_paths[[dataset]][grepl(paste0(".*_pc:", pc, "_nn:", nn, "$"),full_knn_result_paths[[dataset]])]
+    paths <- paths[!grepl("raw_counts",paths)]
     
     full_KNNs <- lapply(paths, function(id) readRDS(id))
-    # names(full_KNNs) <- list.files(
-    #   "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/full_knns", 
-    #   pattern = dataset, 
-    #   full.names = FALSE
-    #   )
-    # 
-    # # Filter out negative controls
-    # full_KNNs <- full_KNNs[-grep("raw_counts",names(full_KNNs))]
     
-    paths <- reduced_knn_result_paths[[dataset]][grepl(paste0("_pc:",pc,"_nn:",nn),reduced_knn_result_paths[[dataset]])]
-    paths <- paths[-grepl("raw_counts",paths)]
+    paths <- reduced_knn_result_paths[[dataset]][grepl(paste0(".*_pc:", pc, "_nn:", nn, "$"),reduced_knn_result_paths[[dataset]])]
+    paths <- paths[!grepl("raw_counts",paths)]
     reduced_KNNs <- lapply(paths, function(id) readRDS(id))
     
-    # names(reduced_KNNs) <- list.files(
-    #   "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/reduced_knns", 
-    #   pattern = dataset, 
-    #   full.names = FALSE
-    #   )
+    reduced_info  <- str_match(paths,
+                        paste0(dataset, "_(.*)_alpha:(TRUE|FALSE)"))
+    reduced_trans <- reduced_info[,2]
+    reduced_alpha <- reduced_info[,3]
+    names(reduced_KNNs) <- reduced_trans
     
     stopifnot(nrow(full_KNNs[[1]]) == sapply(full_KNNs, nrow))
     stopifnot(ncol(full_KNNs[[1]]) == sapply(full_KNNs, ncol))
@@ -221,6 +369,16 @@ for(dataset in names(full_knn_result_paths)){
     })
     n_common_knns <- lengths(common_knns)
     
+    # Redo the reduced now with the negative controls (raw counts & scaled)
+    paths <- reduced_knn_result_paths[[dataset]][grepl(paste0(".*_pc:", pc, "_nn:", nn, "$"),reduced_knn_result_paths[[dataset]])]
+    reduced_KNNs <- lapply(paths, function(id) readRDS(id))
+    reduced_info  <- str_match(paths,
+                        paste0(dataset, "_(.*)_alpha:(TRUE|FALSE)"))
+    reduced_trans <- reduced_info[,2]
+    reduced_alpha <- reduced_info[,3]
+    names(reduced_KNNs) <- reduced_trans
+    
+  
     overlapping_knns_per_trans <- vapply(reduced_KNNs, function(knn){
       overlap <- sapply(seq_len(n_cells), function(idx){
         com_knn <- common_knns[[idx]]
@@ -231,14 +389,14 @@ for(dataset in names(full_knn_result_paths)){
     
     res <- tibble(
       overlap = overlapping_knns_per_trans, 
-      transformation_full_data_ids = NA, 
-      transformation_reduced_data_ids = NA, 
-      dataset = dataset, 
-      seed = 1, 
+      transformation_full_data_ids = names(full_KNNs), 
+      transformation_reduced_data_ids = names(reduced_KNNs), 
+      dataset = sub("_seed.*", "", dataset), 
+      seed = seed, 
       pca_dim = pc, 
       knn = nn, 
-      transformation = NA, 
-      alpha = NA)
+      transformation = names(reduced_KNNs), 
+      alpha = reduced_alpha)
     
     result_id <- paste0(dataset,"_pc:",pc,"_nn:",nn)
     
@@ -248,32 +406,219 @@ for(dataset in names(full_knn_result_paths)){
   }
 }
 
+paths
 
 ```
 
 
 ```{r}
 
-        transformations_sorted <- transformations[order(nchar(transformations), decreasing = TRUE)]
-        transformation <- transformations_sorted[which.max(str_detect(result_id, fixed(transformations_sorted)))]
+paths <- list.files("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results", include.dirs = F, recursive = F)
+paths <- paths[!paths %in% c("full_knns", "logs", "reduced_knns")]
 
-        res <- tibble(
-          mean_overlap = cons, 
-          transformation_id = result_id, 
-          dataset = str_extract(result_id, "^GSE\\d+"), 
-          seed = 1,
-          pca_dim = str_extract(result_id, "(?<=pc:)\\d+"), 
-          knn = str_extract(result_id, "(?<=nn:)\\d+"), 
-          transformation = transformation, 
-          alpha = str_extract(result_id, "(?<=alpha:)\\d*\\.?\\d+")
-        )
+res <- lapply(paths, function(res_id){
+  res <- read_tsv(file.path("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results", res_id), show_col_types = FALSE)
+}) %>%
+  bind_rows()
 
+write_tsv(res, "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/final_metrics.tsv")
+
+```
+
+
+```{r}
+
+res_main <- res %>%
+  filter(alpha %in% c("TRUE", "FALSE", 1, 0, NA)) %>%
+  filter(!overlap %in% NA) %>%
+  #filter(!dataset %in% "smartSeq3_siRNA_knockdown") %>%
+  filter(pca_dim %in% c(10, 50)) %>%
+  filter(knn %in% 50) %>% 
+  mutate(knn_recovery = overlap / knn) %>%
+  mutate(knn_recovery = knn_recovery / mean(knn_recovery)) %>%
+  tidylog::left_join(trans_families)
+
+```
+
+
+```{r,fig.width= 5, fig.height= 6}
+
+p <- ggplot(res_main, aes(x = knn_recovery, y = transformation)) +
+  # Grey points
+  geom_quasirandom(color = "grey", size = 1, alpha = 0.2) +
+  # Colored mean points (no CI)
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    aes(color = family),
+    size = 3
+  ) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(name = "Relative k-NN overlap", breaks = c(0.5, 1, 1.5)) +
+  coord_cartesian(xlim = c(0, 2)) +
+  scale_color_brewer(palette = "Dark2") +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_text(size = 9),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "grey30", fill = NA, size = 0.1),
+    legend.position = "none",
+    plot.title.position = "plot"
+  ) +
+  ggh4x::facet_grid2(rows = vars(family), scales = "free_y", space = "free_y", switch = "y") +
+  theme(strip.text.y.left = element_blank())
+
+p
 
 
 ```
 
 
+```{r}
 
+datasets <- c(
+  'mcSCRB', 
+  'smartSeq3_fibroblasts', 
+  'smartSeq3_fibroblasts_alt', 
+  'smartSeq3_hek', 
+  'smartSeq3_siRNA_knockdown'
+)
+
+umap_data <- lapply(
+  paste0(
+    "/vast/scratch/users/liu.ne/transformGamPoi_downsampling_data/", 
+    datasets, 
+    "_seed:1"),
+  function(x)readRDS(x))
+
+names(umap_data) <- datasets
+umap_pcas <- lapply(umap_data, function(x)
+  {list(
+    full = (log2(t(x$full)+1) %>% 
+      BiocSingular::runSVD(
+        k=20, center = T, 
+        scale = F,
+        BSPARAM = BiocSingular::FastAutoParam()
+        ))$u,
+    reduced = (log2(t(x$reduced)+1) %>% 
+      BiocSingular::runSVD(
+        k=20, center = T, 
+        scale = F,
+        BSPARAM = BiocSingular::FastAutoParam()
+        ))$u
+    )})
+
+umaps <- lapply(umap_pcas, function(x){
+  list(full = uwot::umap(x$full),
+       reduced = uwot::umap(x$reduced))})
+
+tsnes <- lapply(umap_pcas, function(x){
+  list(full = scater::calculateTSNE(t(x$full)),
+       reduced = scater::calculateTSNE(t(x$reduced)))})
+
+umap_clusters <- lapply(umap_data, function(x){
+  bluster::clusterRows(log2(t(x$full)+1), bluster::KNNGraphParam(), full = TRUE)})
+  
+# if(length(unique(clustering$clusters)) > 15){
+#   clusters <- bluster::mergeCommunities(clustering$objects$graph, clustering$clusters, number = 15)
+# }else{
+#   clusters <- clustering$clusters
+# }
+
+
+```
+
+```{r, fig.width=3, fig.height=3}
+
+tsne_plot <- function(data, labels){
+  ggplot(
+        data,
+        aes(x = TSNE1, y = TSNE2, color = labels)
+      ) +
+      geom_point(size = 0.6, alpha = 0.7,
+                 show.legend = F) +
+      coord_equal() +
+      #facet_grid(set ~ dataset, scales = if (free_scales) "free" else "fixed") +
+      labs(x = NULL, y = NULL, color = NULL) +
+      #coord_fixed(xlim = c(-15, 15), ylim = c(-15, 15), clip = "off") +
+      # scale_x_continuous(expand = expansion(0)) +
+      # scale_y_continuous(expand = expansion(0)) +
+      # scale_size(range = c(1e-6, 2)) +
+      theme_minimal() +
+      theme(
+        strip.text.x = element_text(face = "bold"),
+        strip.text.y = element_text(face = "bold"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        #panel.border = element_rect(colour = "grey85", fill = NA, linewidth = 0.8),
+        #aspect.ratio = 1,
+      )
+}
+
+umap_plot <- function(data, labels){
+  data <- as.data.frame(data)
+  ggplot(
+        data,
+        aes(x = V1, y = V2, color = labels)
+      ) +
+      geom_point(size = 0.6, alpha = 0.7,
+                 show.legend = F) +
+      coord_equal() +
+      #facet_grid(set ~ dataset, scales = if (free_scales) "free" else "fixed") +
+      labs(x = NULL, y = NULL, color = NULL) +
+      # coord_fixed(xlim = c(-15, 15), ylim = c(-15, 15), clip = "off") +
+      # scale_x_continuous(expand = expansion(0)) +
+      # scale_y_continuous(expand = expansion(0)) +
+      # scale_size(range = c(1e-6, 2)) +
+      theme_minimal() +
+      theme(
+        strip.text.x = element_text(face = "bold"),
+        strip.text.y = element_text(face = "bold"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        #panel.border = element_rect(colour = "grey85", fill = NA, linewidth = 0.8),
+        #aspect.ratio = 1,
+      )
+}
+
+tsne_plot(tsnes$mcSCRB$full, umap_clusters$mcSCRB$clusters)
+tsne_plot(tsnes$mcSCRB$reduced, umap_clusters$mcSCRB$clusters)
+
+tsne_plot(tsnes$smartSeq3_fibroblasts$full, umap_clusters$smartSeq3_fibroblasts$clusters)
+tsne_plot(tsnes$smartSeq3_fibroblasts$reduced, umap_clusters$smartSeq3_fibroblasts$clusters)
+
+tsne_plot(tsnes$smartSeq3_fibroblasts_alt$full, umap_clusters$smartSeq3_fibroblasts_alt$clusters)
+tsne_plot(tsnes$smartSeq3_fibroblasts_alt$reduced, umap_clusters$smartSeq3_fibroblasts_alt$clusters)
+
+tsne_plot(tsnes$smartSeq3_hek$full, umap_clusters$smartSeq3_hek$clusters)
+tsne_plot(tsnes$smartSeq3_hek$reduced, umap_clusters$smartSeq3_hek$clusters)
+
+tsne_plot(tsnes$smartSeq3_siRNA_knockdown$full, umap_clusters$smartSeq3_siRNA_knockdown$clusters)
+tsne_plot(tsnes$smartSeq3_siRNA_knockdown$reduced, umap_clusters$smartSeq3_siRNA_knockdown$clusters)
+
+```
+
+
+```{r,fig.width=3, fig.height=3}
+
+umap_plot(umaps$mcSCRB$full, umap_clusters$mcSCRB$clusters)
+umap_plot(umaps$mcSCRB$reduced, umap_clusters$mcSCRB$clusters)
+
+umap_plot(umaps$smartSeq3_fibroblasts$full, umap_clusters$smartSeq3_fibroblasts$clusters)
+umap_plot(umaps$smartSeq3_fibroblasts$reduced, umap_clusters$smartSeq3_fibroblasts$clusters)
+
+umap_plot(umaps$smartSeq3_fibroblasts_alt$full, umap_clusters$smartSeq3_fibroblasts_alt$clusters)
+umap_plot(umaps$smartSeq3_fibroblasts_alt$reduced, umap_clusters$smartSeq3_fibroblasts_alt$clusters)
+
+umap_plot(umaps$smartSeq3_hek$full, umap_clusters$smartSeq3_hek$clusters)
+umap_plot(umaps$smartSeq3_hek$reduced, umap_clusters$smartSeq3_hek$clusters)
+
+umap_plot(umaps$smartSeq3_siRNA_knockdown$full, umap_clusters$smartSeq3_siRNA_knockdown$clusters)
+umap_plot(umaps$smartSeq3_siRNA_knockdown$reduced, umap_clusters$smartSeq3_siRNA_knockdown$clusters)
+
+
+```
 
 
 
