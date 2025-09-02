@@ -1,0 +1,687 @@
+---
+title: "Ahlmann-Eltze & Huber plots"
+output: html_document
+date: "2025-09-01"
+---
+
+# Load packages
+```{r}
+library(ggplot2)
+library(ggbeeswarm)
+library(ggh4x)
+library(dplyr)
+source("/home/users/allstaff/liu.ne/scMultiOmics-normalization/transformGamPoi_Paper_benchmark/benchmark/src/transformations/transformation_helper.R")
+devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
+set.seed(1)
+
+```
+
+# Prepare data for plotting
+```{r}
+
+# Bind final result tsv
+res <- bind_rows(
+  read_tsv("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/final_metrics.tsv") %>% 
+    transmute(benchmark = "simulation", overlap = mean_knn_overlap, knn, pca_dim, alpha = as.character(alpha), transformation, dataset = simulator, replicate = seed),
+  read_tsv("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/consistency_results/final_metrics.tsv") %>% 
+    transmute(benchmark = "consistency", overlap = mean_overlap, knn, pca_dim, alpha = as.character(alpha), transformation, dataset, replicate = seed),
+  read_tsv("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/downsampling_results/final_metrics.tsv") %>% 
+    transmute(benchmark = "downsampling", overlap = overlap, knn, pca_dim, alpha = as.character(alpha), transformation, dataset, replicate = seed)
+) 
+
+
+
+parameter_choices <- bind_rows(
+  tibble(benchmark = "downsampling", knn = 50, pca_dim = c(10, 10, 10, 10, 50),
+         dataset = c("mcSCRB", "smartSeq3_fibroblasts", "smartSeq3_fibroblasts_alt", "smartSeq3_hek", "smartSeq3_siRNA_knockdown")),
+  tibble(benchmark = "simulation", knn = 50, pca_dim = c(5, 10, 10, 50, 50),
+         dataset = c("Dyngen", "Linearwalk", "Muscat", "Randomwalk", "scDesign")),
+  tibble(benchmark = "consistency", knn = 50, pca_dim = 50,
+         dataset = unique(filter(res, benchmark == "consistency")$dataset)),
+)
+
+
+fastRUVIII_files <- list.files(
+  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/knn_overlap_metrics",
+  pattern = "fastRUVIII.*\\.tsv$",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+# --- 1) Helpers: parse params from filename and read metrics ---
+parse_params_from_filename <- function(path) {
+  fn <- basename(path) |> str_remove("\\.tsv$")
+  tibble(
+    path       = path,
+    filename   = fn,
+    dataset    = str_match(fn, "^(.*)_seed_")[, 2],
+    seed       = str_match(fn, "_seed_(\\d+)")[, 2] |> as.integer(),
+    k          = str_match(fn, "_k(\\d+)")[, 2] |> as.integer(),
+    clust_res  = str_match(fn, "_clust_res:([0-9.]+)")[, 2] |> as.numeric(),
+    pca_dim    = str_match(fn, "_pc:(\\d+)")[, 2] |> as.integer(),
+    knn        = str_match(fn, "_nn:(\\d+)")[, 2] |> as.integer()
+    )
+}
+
+read_metrics_row <- function(path) {
+  # tolerant to column name differences across benchmarks
+  m <- suppressMessages(readr::read_tsv(path, show_col_types = FALSE))
+  # if the TSV has multiple rows (rare), keep the first (your files look 1-row)
+  #m <- m |> slice(1)
+  tibble(
+    ARI  = m$ARI %||% NA_real_,
+    AMI  = m$AMI %||% NA_real_,
+    NMI  = m$NMI %||% NA_real_,
+    mean_knn_overlap = coalesce(m$mean_knn_overlap, m$overlap, m$mean_overlap)
+  )
+}
+
+# read all fastRUVIII runs
+fastRUV_runs <- map_dfr(fastRUVIII_files, function(p) {
+  bind_cols(parse_params_from_filename(p), read_metrics_row(p))
+})
+
+
+ruv_params <- tribble(
+  ~dataset,       ~k, ~clust_res, ~benchmark,
+  "Dyngen",         1,   0.5,       "simulation",
+  "Muscat",         1,   1.0,       "simulation",
+  "Linearwalk",     1,   0.5,       "simulation",
+  "Randomwalk",     3,   1.0,       "simulation",
+  "scDesign",       2,   0.1,       "simulation"
+)
+
+# 2) keep only fastRUVIII runs that match those params (uses `fast_runs` built earlier)
+ruv_rows <- fastRUV_runs %>%
+  mutate(clust_res = round(clust_res, 4)) %>%
+  semi_join(ruv_params, by = c("dataset","k","clust_res")) %>%
+  # (optional) restrict to your chosen knn/pca combos used elsewhere
+  inner_join(parameter_choices, by = c("dataset","knn","pca_dim")) %>%
+  mutate(
+    transformation = "fastRUVIII",
+    replicate = seed,
+    overlap   = mean_knn_overlap,
+    alpha     = as.character(NA)
+  ) %>%
+  transmute(benchmark, overlap, knn, pca_dim, alpha, transformation, dataset, replicate)
+
+# 3) rebuild res: remove all old fastRUVIII rows, add only the selected ones
+res <- bind_rows(
+  res %>%
+  filter(!(benchmark == "simulation" &
+           str_detect(as.character(transformation), "^fastRUVIII"))),
+  ruv_rows
+)
+
+
+transformations <- c(
+  "logp1", 
+  "logp1_hvg", 
+  "logp1_zscore", 
+  "logp1_hvg_zscore",
+  "logp_cpm", 
+  "logp1_size_normed", 
+  "acosh", 
+  "logp_alpha",
+  "pearson", 
+  "pearson_clip", 
+  "pearson_analytic", 
+  "sctransform",
+  "rand_quantile", 
+  "pearson_clip_hvg", 
+  "pearson_clip_zscore",
+  "pearson_clip_hvg_zscore", 
+  "normalisr_norm", 
+  "raw_counts", 
+  "scaled_raw_counts",
+  "fastRUVIII"
+)
+
+
+trans_families <- list(
+  delta_method = c(
+    "logp1", 
+    "acosh", 
+    "logp_alpha", 
+    "logp_cpm", 
+    "logp1_size_normed", 
+    "logp1_hvg", 
+    "logp1_zscore",  
+    "logp1_hvg_zscore"),
+  glm_residual = c(
+    "pearson_clip", 
+    "sctransform", 
+    "pearson_analytic", 
+    "rand_quantile", 
+    "pearson",  
+    "pearson_clip_hvg", 
+    "pearson_clip_zscore", 
+    "pearson_clip_hvg_zscore"),
+  latent_expr = c(
+    "sanity_map", 
+    "sanity_dists", 
+    "dino", 
+    "normalisr_norm"),
+  count_model = c(
+    "glmpca", 
+    "newwave"),
+  negative_control = c(
+    "raw_counts", 
+    "scaled_raw_counts"),
+  RUV = c('fastRUVIII_k:1', 'fastRUVIII_k:2', 'fastRUVIII')) %>%
+  enframe() %>%
+  unnest(value) %>%
+  transmute(transformation = value, family = name)
+trans_families$transformation <- factor(trans_families$transformation, levels = trans_families$transformation)
+
+res <- mutate(res, transformation = factor(transformation, levels = trans_families$transformation))
+
+
+# Make new plotting function without their paper's outdated libraries
+make_main_plot_panel <- function(
+  data,
+  xlim = c(0, 2),
+  breaks = c(0.5, 1, 1.5),
+  base_size = 10,
+  point_size = 1,
+  point_alpha = 0.2,
+  mean_size = 3,
+  palette = "Dark2",
+  facet = TRUE
+) {
+  p <- ggplot(data, aes(x = knn_recovery, y = transformation)) +
+    ggbeeswarm::geom_quasirandom(color = "grey", size = point_size, alpha = point_alpha) +
+    stat_summary(
+      fun = mean,
+      geom = "point",
+      aes(color = family),
+      size = mean_size
+    ) +
+    geom_vline(xintercept = 1, linetype = "dashed", color = "grey40") +
+    scale_x_continuous(name = "Relative k-NN overlap", breaks = breaks) +
+    coord_cartesian(xlim = xlim) +
+    scale_color_brewer(palette = palette) +
+    theme_minimal(base_size = base_size) +
+    theme(
+      axis.title.y = element_blank(),
+      axis.text.y = element_text(size = 9),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "grey30", fill = NA, size = 0.1),
+      legend.position = "none",
+      plot.title.position = "plot"
+    )
+
+  if (isTRUE(facet)) {
+    p <- p +
+      ggh4x::facet_grid2(
+        rows = vars(family),
+        scales = "free_y",
+        space  = "free_y",
+        switch = "y"
+      ) +
+      theme(strip.text.y.left = element_blank())
+  }
+
+  p
+}
+
+
+# Helper for saving plots
+save_plot <- function(plot, name, width = 5, height = 5, dpi = 600){ggsave(
+  filename = paste0("/home/users/allstaff/liu.ne/scMultiOmics-normalization/plots/", name),   # or "figure1.png" / "figure1.pdf"
+  plot = plot,
+  device = "tiff",             # use "pdf" for vector output
+  dpi = dpi,                   # 600 is very high quality
+  width = width, 
+  height = height,       # in inches (adjust for journal)
+  units = "in",
+  compression = "lzw",
+  bg = "white"
+)}
+
+
+res
+
+```
+
+
+```{r, fig.width= 5, fig.height= 6}
+
+res_main <- res %>%
+  filter(alpha %in% c("1","0", "TRUE", "FALSE", 1, NA)) %>%
+  tidylog::inner_join(parameter_choices)  %>%
+  mutate(knn_recovery = overlap / knn) %>%
+  group_by(dataset, replicate, knn) %>%
+  mutate(knn_recovery = knn_recovery / mean(knn_recovery)) %>%
+  tidylog::left_join(trans_families)
+
+consistency_pl <- res_main %>%
+  filter(benchmark == "consistency") %>%
+  filter(knn %in% 50) %>%
+  make_main_plot_panel() +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "10X gene subset 1 vs. gene subset 2")
+
+simulation_pl <- res_main %>%
+  filter(benchmark == "simulation") %>%
+  filter(knn %in% 50) %>%
+  make_main_plot_panel() +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "Ground truth vs simulated counts")
+
+downsampling_pl <- res_main %>%
+  filter(benchmark == "downsampling") %>%
+  filter(knn %in% 50) %>%
+  filter(pca_dim %in% c(10,50)) %>%
+  filter(!overlap %in% NA) %>%
+  make_main_plot_panel(point_alpha = 0.1) +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "Original vs downsampled deepseq data")
+
+consistency_pl
+simulation_pl
+downsampling_pl
+
+save_plot(consistency_pl, "consistency_headline", width = 5, height = 6)
+save_plot(simulation_pl, "simulation_headline", width = 5, height = 6)
+save_plot(downsampling_pl, "downsampling_headline", width = 5, height = 6)
+
+
+```
+
+
+```{r}
+res_main %>%
+  filter(benchmark == "downsampling") %>%
+  filter(knn == 50) %>%
+  filter(pca_dim == 10) %>%
+  filter(dataset == "mcSCRB") %>%
+  make_main_plot_panel() +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "Original vs downsampled deepseq data")
+```
+
+
+# Check metrics for different RUV params
+```{r}
+
+fastRUVIII_files <- list.files(
+  "/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/knn_overlap_metrics",
+  pattern = "fastRUVIII.*\\.tsv$",
+  full.names = TRUE,
+  recursive = TRUE
+)
+
+# --- 1) Helpers: parse params from filename and read metrics ---
+parse_params_from_filename <- function(path) {
+  fn <- basename(path) |> str_remove("\\.tsv$")
+  tibble(
+    path       = path,
+    filename   = fn,
+    dataset    = str_match(fn, "^(.*)_seed_")[, 2],
+    seed       = str_match(fn, "_seed_(\\d+)")[, 2] |> as.integer(),
+    k          = str_match(fn, "_k(\\d+)")[, 2] |> as.integer(),
+    clust_res  = str_match(fn, "_clust_res:([0-9.]+)")[, 2] |> as.numeric(),
+    pca_dim    = str_match(fn, "_pc:(\\d+)")[, 2] |> as.integer(),
+    knn        = str_match(fn, "_nn:(\\d+)")[, 2] |> as.integer()
+    )
+}
+
+read_metrics_row <- function(path) {
+  # tolerant to column name differences across benchmarks
+  m <- suppressMessages(readr::read_tsv(path, show_col_types = FALSE))
+  # if the TSV has multiple rows (rare), keep the first (your files look 1-row)
+  #m <- m |> slice(1)
+  tibble(
+    ARI  = m$ARI %||% NA_real_,
+    AMI  = m$AMI %||% NA_real_,
+    NMI  = m$NMI %||% NA_real_,
+    mean_knn_overlap = coalesce(m$mean_knn_overlap, m$overlap, m$mean_overlap)
+  )
+}
+
+# read all fastRUVIII runs
+fast_runs <- map_dfr(fastRUVIII_files, function(p) {
+  bind_cols(parse_params_from_filename(p), read_metrics_row(p))
+})
+
+```
+
+
+# Correlation plot
+```{r, fig.height= 8, fig.width= 8}
+
+result_correlation_dat <- res_main %>%
+  ungroup() %>%
+  dplyr::select(benchmark, knn_recovery, transformation, family, dataset, replicate) %>%
+  group_by(benchmark, transformation, family) %>%
+  summarize(knn_recovery = mean(knn_recovery)) %>%
+  inner_join(., ., by = c("transformation", "family")) %>%
+  mutate(benchmark.x = as.factor(benchmark.x),
+         benchmark.y = as.factor(benchmark.y)) %>%
+  filter(benchmark.x != benchmark.y) 
+
+result_correlation_dat %>%
+  group_by(benchmark.x, benchmark.y) %>%
+  summarize(cor = cor(knn_recovery.x, knn_recovery.y, method = "pearson"),
+            cor_rank = cor(knn_recovery.x, knn_recovery.y, method = "spearman"),
+            p_val = cor.test(knn_recovery.x, knn_recovery.y, method = "pearson")$p.value,
+            p_val_rank = cor.test(knn_recovery.x, knn_recovery.y, method = "spearman")$p.value)
+
+ruv     <- dplyr::filter(result_correlation_dat, family == "RUV")
+non_ruv <- dplyr::filter(result_correlation_dat, family != "RUV")
+
+p <- ggplot(result_correlation_dat, aes(knn_recovery.x, knn_recovery.y)) +
+  ggpubr::stat_cor(label.x.npc = "left", label.y.npc = "top", size = 3, color = "grey20") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted", linewidth = 0.4, color = "grey70") +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 0.7, color = "grey30", fill = "grey80", alpha = 0.25) +
+
+  # background points (de-emphasize non-RUV)
+  geom_point(data = non_ruv, aes(color = family), size = 2.2, alpha = 0.3) +
+
+  # emphasize RUV: halo + colored point on top
+  geom_point(data = ruv, color = "black", size = 5, alpha = 0.9) +
+  geom_point(data = ruv, aes(color = family), size = 3.6) +
+
+  facet_grid(vars(benchmark.x), vars(benchmark.y)) +
+  coord_fixed() +
+  lims(x = c(0.4, 1.6), y = c(0.4, 1.6)) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(title = "The results of the three benchmarks are highly correlated",
+       x = NULL, y = NULL) +
+  theme_classic(base_size = 12) +
+  theme(
+    panel.border     = element_rect(colour = "#D0D0D0", fill = NA, linewidth = 0.4),
+    strip.background = element_blank(),
+    strip.text       = element_text(face = "bold"),
+    legend.title     = element_blank(),
+    plot.title       = element_text(face = "bold", size = 18)
+  )
+
+ggsave(
+  filename = "plots/correl_plot",   # or "figure1.png" / "figure1.pdf"
+  plot = p,
+  device = "tiff",             # use "pdf" for vector output
+  dpi = 600,                   # 600 is very high quality
+  width = 8, height = 8,       # in inches (adjust for journal)
+  units = "in",
+  compression = "lzw"          # (for TIFF to reduce file size)
+)
+
+```
+
+# Clustering metrics for simulation
+```{r}
+
+sim_res <- read_tsv("/vast/scratch/users/liu.ne/transformGamPoi_Output/results/simulation_results/final_metrics.tsv") %>% 
+  mutate(transformation = factor(transformation, levels = trans_families$transformation))
+
+parameter_choices <- tibble(benchmark = "simulation", knn = 50, pca_dim = c(5, 10, 10, 50, 50),
+         simulator = c("Dyngen", "Linearwalk", "Muscat", "Randomwalk", "scDesign"),
+         dataset = c("Dyngen", "Linearwalk", "Muscat", "Randomwalk", "scDesign"))
+
+sim_res_main <- sim_res %>%
+  filter(alpha %in% c("TRUE", "FALSE", 1, 0, NA, "1" ,"0")) %>%
+  tidylog::inner_join(parameter_choices) %>%
+  tidylog::left_join(trans_families)
+
+ruv_rows <- fastRUV_runs %>%
+  semi_join(ruv_params, by = c("dataset","k","clust_res")) %>%
+  # (optional) restrict to your chosen knn/pca combos used elsewhere
+  inner_join(parameter_choices, by = c("dataset","knn","pca_dim")) %>%
+  transmute(
+    ARI, AMI, NMI, 
+    alpha = NA,
+    mean_knn_overlap, 
+    knn, pca_dim, alpha, 
+    transformation = "fastRUVIII", 
+    dataset = simulator, 
+    family = "RUV")
+
+sim_res_main <- bind_rows(
+  sim_res_main %>%
+  filter(!str_detect(as.character(transformation), "^fastRUVIII")),
+  ruv_rows
+)
+
+gradient_palette <- colorRampPalette(c("#e7ebf7", "#90add9"))
+colors <- gradient_palette(length(unique(res$transformation)))
+
+plot_boxplot_categorical <- function(data_vector, category_vector, names,
+                                     aspect_ratio = 1.3,
+                                     highlight = "fastRUVIII",
+                                     highlight_color = "tomato",
+                                     palette = NULL) {
+  # Build dataframe
+  data <- data.frame(value = data_vector, category = category_vector)
+  colnames(data) <- names
+  
+  # Reorder factor: put highlight at the end
+  data[[names[2]]] <- factor(
+    data[[names[2]]],
+    levels = c(setdiff(unique(data[[names[2]]]), highlight), highlight)
+  )
+  
+  xvar <- names[2]
+  yvar <- names[1]
+  
+  # Build base plot
+  p <- ggplot(data, aes(x = .data[[xvar]], y = .data[[yvar]], fill = .data[[xvar]])) +
+    geom_boxplot() +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.border = element_rect(colour = "grey80", fill = NA, size = 0.8),
+      aspect.ratio = 1 / aspect_ratio,
+      legend.position = 'none',
+      axis.title.x = element_blank()
+    ) +
+    labs(x = xvar, y = yvar,
+         title = paste0("Boxplot of ", yvar, " grouped by ", xvar))
+  
+  # Colors: gradient for all, override highlight
+  all_levels <- levels(data[[xvar]])
+  
+  if (is.null(palette)) {
+    # fallback palette if none provided
+    palette <- scales::hue_pal()(length(all_levels))
+  }
+  
+  color_map <- setNames(palette[seq_along(all_levels)], all_levels)
+  color_map[highlight] <- highlight_color
+  
+  p + scale_fill_manual(values = color_map)
+}
+
+
+
+plot_boxplot_categorical(
+  sim_res_main$ARI,
+  sim_res_main$transformation,
+  names = c("Adjusted Rand Index", "Transformation"),
+  highlight = "fastRUVIII",
+  highlight_color = "#f7d379",
+  palette = colors
+)
+
+plot_boxplot_categorical(
+  sim_res_main$AMI,
+  sim_res_main$transformation,
+  names = c("Adjusted Mutual Information", "Transformation"),
+  highlight = "fastRUVIII",
+  highlight_color = "#f7d379",
+  palette = colors
+)
+
+
+
+```
+
+# Clustering metric with knn overlap correlation
+```{r}
+single_trend <- function(sim_name, metric = c("ARI","AMI")) {
+  metric <- rlang::arg_match(metric)
+
+  dat <- sim_res_main %>% filter(dataset == sim_name)
+  r_val <- cor(dat$mean_knn_overlap, dat[[metric]], use = "complete.obs")
+  x_mid <- mean(range(dat$mean_knn_overlap, na.rm = TRUE))
+
+  y_lab <- if (metric == "ARI") "Adjusted Rand Index" else "Adjusted Mutual Information"
+
+  ggplot(dat, aes(x = mean_knn_overlap, y = .data[[metric]])) +
+    # reference means per dataset
+    geom_vline(xintercept = mean(dat$mean_knn_overlap, na.rm = TRUE),
+               linetype = 2, linewidth = 0.3, color = "grey60") +
+    geom_hline(yintercept = mean(dat[[metric]], na.rm = TRUE),
+               linetype = 2, linewidth = 0.3, color = "grey60") +
+
+    # trend line
+    geom_smooth(method = "lm", se = FALSE,
+                linetype = "dashed", linewidth = 0.8, color = "grey25") +
+
+    # non-RUV points (de-emphasize)
+    geom_point(data = ~ dplyr::filter(.x, family != "RUV"),
+               aes(color = family), size = 1.8, alpha = 0.35) +
+
+    # RUV points (emphasize: black halo + colored dot)
+    geom_point(data = ~ dplyr::filter(.x, family == "RUV"),
+               shape = 21, fill = NA, color = "black", size = 4, stroke = 0.9) +
+    geom_point(data = ~ dplyr::filter(.x, family == "RUV"),
+               aes(color = family), size = 3.1) +
+
+    # correlation label
+    annotate("label", x = x_mid,
+             y = min(dat[[metric]], na.rm = TRUE) + 0.05 * diff(range(dat[[metric]], na.rm = TRUE)),
+             label = sprintf("r = %.2f", r_val),
+             label.size = 0, fill = NA, color = "grey25") +
+
+    scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1), expand = expansion(0)) +
+    scale_x_continuous(expand = expansion(mult = 0.1)) +
+    # scale_color_manual(values = trans_families_colors,
+    #                    labels = as.character(trans_families_labels_long),
+    #                    name = "") +
+    labs(title = sim_name, x = "KNN Overlap", y = y_lab) +
+    theme_classic(base_size = 12) +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(face = "bold"),
+      plot.title.position = "plot"
+    )
+ }
+ 
+```
+ 
+ 
+```{r}
+single_trend("Dyngen", "ARI")
+single_trend("Muscat", "ARI")
+single_trend("Linearwalk", "ARI")
+single_trend("Randomwalk", "ARI")
+single_trend("scDesign", "ARI")
+
+```
+
+```{r}
+single_trend("Dyngen", "AMI")
+single_trend("Muscat", "AMI")
+single_trend("Linearwalk", "AMI")
+single_trend("Randomwalk", "AMI")
+single_trend("scDesign", "AMI")
+
+```
+
+
+# Unaggregated simulation plots
+```{r,fig.width= 5, fig.height= 6}
+
+make_main_plot_panel <- function(
+  data,
+  xlim = c(0, 2),
+  breaks = c(0.5, 1, 1.5),
+  base_size = 10,
+  point_size = 1,
+  point_alpha = 0.2,
+  mean_size = 3,
+  palette = "Dark2",
+  facet = TRUE
+) {
+  p <- ggplot(data, aes(x = knn_recovery, y = transformation)) +
+    ggbeeswarm::geom_quasirandom(color = "grey", size = point_size, alpha = point_alpha) +
+    stat_summary(
+      fun = mean,
+      geom = "point",
+      aes(color = family),
+      size = mean_size
+    ) +
+    geom_vline(xintercept = mean(data$knn_recovery), linetype = "dashed", color = "grey40") +
+    scale_x_continuous(name = "Relative k-NN overlap", breaks = breaks) +
+    coord_cartesian(xlim = xlim) +
+    scale_color_brewer(palette = palette) +
+    theme_minimal(base_size = base_size) +
+    theme(
+      axis.title.y = element_blank(),
+      axis.text.y = element_text(size = 9),
+      panel.grid = element_blank(),
+      panel.border = element_rect(color = "grey30", fill = NA, size = 0.1),
+      legend.position = "none",
+      plot.title.position = "plot"
+    )
+
+  if (isTRUE(facet)) {
+    p <- p +
+      ggh4x::facet_grid2(
+        rows = vars(family),
+        scales = "free_y",
+        space  = "free_y",
+        switch = "y"
+      ) +
+      theme(strip.text.y.left = element_blank())
+  }
+
+  p
+}
+
+
+dyngen_pl <- sim_res_main %>%
+  mutate(knn_recovery = mean_knn_overlap) %>%
+  filter(dataset == "Dyngen") %>%
+  make_main_plot_panel(xlim = c(0, 20)) +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "Dyngen pc=5")
+
+muscat_pl <- sim_res_main %>%
+  mutate(knn_recovery = mean_knn_overlap) %>%
+  filter(dataset == "Muscat") %>%
+  make_main_plot_panel(xlim = c(0, 4)) +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "Muscat pc=10")
+
+linearwalk_pl <- sim_res_main %>%
+  mutate(knn_recovery = mean_knn_overlap) %>%
+  filter(dataset == "Linearwalk") %>%
+  make_main_plot_panel(xlim = c(0, 40)) +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "Linearwalk pc=10")
+
+randomwalk_pl <- sim_res_main %>%
+  mutate(knn_recovery = mean_knn_overlap) %>%
+  filter(dataset == "Randomwalk") %>%
+  make_main_plot_panel(xlim = c(0, 50)) +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "Randomwalk pc=50")
+
+scdesign_pl <- sim_res_main %>%
+  mutate(knn_recovery = mean_knn_overlap) %>%
+  filter(dataset == "scDesign") %>%
+  make_main_plot_panel(xlim = c(0, 12)) +
+  labs(x = "Relative $k$-NN Overlap", 
+       subtitle = "scDesign2 pc=50")
+
+dyngen_pl
+muscat_pl
+linearwalk_pl
+randomwalk_pl
+scdesign_pl
+
+```
+
