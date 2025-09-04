@@ -14,4 +14,4 @@ vaccinated with influenza pandemic H1N1 and seasonal vaccines in 2009.
 - **Ahlmann-Eltze & Huber 2023 plots.Rmd**: All the associated plots in one R markdown.
 - **slurm_benchmarking_scripts**: The actual benchmarking code run on the HPC. Contains both shell and R scripts adapted from Ahlmann-Eltze's paper to run on WEHI's SLURM array. 
 
-<img src="./plots/transformgampoi headline.png">
+<img src="./plots/transformgampoi headline.jpg">
