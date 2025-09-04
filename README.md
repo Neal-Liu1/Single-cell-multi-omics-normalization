@@ -1,4 +1,4 @@
-Contains the code for testing fast-RUVIII on a few CITE-seq datasets, as well as the reproduction of Ahlmann-Eltze & Huber's Nature Methods benchmarking study. 
+Contains the code for testing fast-RUVIII on a few CITE-seq datasets, as well as the reproduction of [Ahlmann-Eltze & Huber's Nature Methods benchmarking study](https://www.nature.com/articles/s41592-023-01814-1). 
 A package for fastRUVIII (still in development) is available [here](https://github.com/Neal-Liu1/fastRUVIII)
 
 ### Main analysis files for reproducing the figures:
