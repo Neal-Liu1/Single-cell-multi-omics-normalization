@@ -9,3 +9,5 @@ test.Rmd
 createPrPsByAnchors.R
 transformGamPoi_Paper_benchmark
 testPackage
+plots
+normalize_by_group.R
