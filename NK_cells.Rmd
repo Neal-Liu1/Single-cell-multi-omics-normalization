@@ -12,9 +12,8 @@ knitr::opts_chunk$set(echo = TRUE)
 # Load libraries & our own helper functions
 ```{r}
 library(Seurat)
-library(ggplot2)
+library(tidyverse)
 library(cowplot)
-library(dplyr)
 library(clusterProfiler)
 library(org.Hs.eg.db)
 library(edgeR)
@@ -82,11 +81,20 @@ adt_metrics <- NormalizeADT(
 
 
 ```{r}
-totalVI_adt <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_adt_nk.h5ad')
-totalVI_rna <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_rna_nk.h5ad')
-rna_metrics <- add_totalVI(rna_metrics, totalVI_rna, assay_name = 'rna_normalized', pcs = 30)
-adt_metrics <- add_totalVI(adt_metrics, totalVI_adt, assay_name = 'adt_normalized', pcs = 13)
+# totalVI_adt <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_adt_nk.h5ad')
+# totalVI_rna <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_rna_nk.h5ad')
+# rna_metrics <- add_totalVI(rna_metrics, totalVI_rna, assay_name = 'rna_normalized', pcs = 30)
+# adt_metrics <- add_totalVI(adt_metrics, totalVI_adt, assay_name = 'adt_normalized', pcs = 13)
 
+ # rna_totalVI_counts <- rna_metrics@Adj_data$totalVI
+ # rna_metrics@Adj_data$totalVI <- log2_sparse(rna_totalVI_counts)
+ # 
+ # rna_metrics@PCs$totalVI <- run_PCA(rna_metrics@Adj_data$totalVI, 30)$u
+ # 
+ # adt_totalVI_counts <- adt_metrics@Adj_data$totalVI
+ # adt_metrics@Adj_data$totalVI <- log2_sparse(adt_totalVI_counts)
+ # 
+ # adt_metrics@PCs$totalVI <- run_PCA(adt_metrics@Adj_data$totalVI, 13)$u
 
 ```
 
@@ -94,15 +102,16 @@ adt_metrics <- add_totalVI(adt_metrics, totalVI_adt, assay_name = 'adt_normalize
 ncgs <- FindNCG(
   rna_metrics, 
   unwanted_variables = c('capture', 'log2_rna_libsize'), 
-  bio_variables = c('Day_Treatment'), 
+  bio_variables = c('Day_Treatment', "genetic_donor"), 
   no.ncg = 500, 
-  sample_fraction = 0.1)
+  sample_fraction = 0.2)
 
 prpc_supervised <- CreatePRPC(
-  rna_metrics@Raw_data, c('Day_Treatment'), 
+  rna_metrics@Raw_data, 
+  bio_vars = c('Day_Treatment', "genetic_donor"), 
   metadata = rna_metrics@Metadata,
   c('capture', 'log2_rna_libsize'), 
-  separate_bins_by_biology = c(T, T),
+  separate_bins_by_biology = c(NA, T),
   group_by_vars = c(NA,'capture'))
 
 rna_metrics <- RunRUVIII(
@@ -113,10 +122,11 @@ rna_metrics <- RunRUVIII(
   name = 'fastRUVIII_supervised')
 
 prpc_adt_supervised <- CreatePRPC(
-  adt_metrics@Raw_data, c('Day_Treatment'), 
-  metadata = rna_metrics@Metadata,
-  c('capture', 'log2_adt_libsize'), 
-  separate_bins_by_biology = c(T, T),
+  adt_metrics@Raw_data, 
+  bio_vars = c('Day_Treatment', "genetic_donor"), 
+  metadata = rna_metrics@Metadata, 
+  uv_vars = c('capture', 'log2_adt_libsize'), 
+  separate_bins_by_biology = c(NA, T),
   group_by_vars = c(NA,'capture'))
 
 adt_metrics <- RunRUVIII(
@@ -130,11 +140,10 @@ adt_metrics <- RunRUVIII(
 
 ```
 
-
 # Plot metrics
 ```{r, fig.height= 6, fig.width= 10}
-p1 <- PlotMultipleCorrelations(rna_metrics, c('capture','log2_rna_libsize', 'Day_Treatment'), titles = c('Batch', 'Libsize', 'Day_Treatment'))
-p2 <- PlotMultipleCorrelations(adt_metrics, c('capture','log2_adt_libsize', 'Day_Treatment'), titles = c('Batch', 'Libsize', 'Day_Treatment'))
+p1 <- PlotMultipleCorrelations(rna_metrics, c('capture','log2_rna_libsize', 'Day_Treatment', "genetic_donor"), titles = c('Batch', 'Libsize', 'Day_Treatment', "Donor"))
+p2 <- PlotMultipleCorrelations(adt_metrics, c('capture','log2_adt_libsize', 'Day_Treatment',"genetic_donor"), titles = c('Batch', 'Libsize', 'Day_Treatment', "Donor"))
 gridExtra::grid.arrange(p1,p2, nrow = 2)
 ```
 
@@ -146,14 +155,44 @@ adt_metrics <- ComputeUMAP(adt_metrics, method = 'uwot')
 ```
 
 ```{r}
-plot_UMAP(rna_metrics@UMAPs$fastRUVIII_supervised, rna_metrics@Metadata$Day_Treatment, run_umap = F, title = 'RUV (logcounts) vs Day treatment')
-plot_UMAP(rna_metrics@UMAPs$fastRUVIII_supervised, rna_metrics@Metadata$log2_rna_libsize, run_umap = F, title = 'RUV (logcounts) vs libsize', label_is_continuous = T)
+plot_UMAP(
+  rna_metrics@UMAPs$fastRUVIII_supervised, 
+  rna_metrics@Metadata$Day_Treatment, run_umap = F, 
+  title = 'RUV (logcounts) vs Day treatment')
+plot_UMAP(
+  rna_metrics@UMAPs$fastRUVIII_supervised, 
+  rna_metrics@Metadata$log2_rna_libsize, run_umap = F, 
+  title = 'RUV (logcounts) vs libsize', label_is_continuous = T)
 
-plot_UMAP(adt_metrics@UMAPs$fastRUVIII_supervised, rna_metrics@Metadata$Day_Treatment, run_umap = F)
-plot_UMAP(adt_metrics@UMAPs$CLR, rna_metrics@Metadata$Day_Treatment, run_umap = F)
-plot_UMAP(adt_metrics@UMAPs$CLR, rna_metrics@Metadata$capture, run_umap = F)
-plot_UMAP(adt_metrics@UMAPs$Raw_counts, rna_metrics@Metadata$Day_Treatment, run_umap = F)
-plot_UMAP(rna_metrics@UMAPs$Raw_counts, rna_metrics@Metadata$Day_Treatment, run_umap = F)
+plot_UMAP(
+  adt_metrics@UMAPs$fastRUVIII_supervised, 
+  rna_metrics@Metadata$Day_Treatment, 
+  run_umap = F, title = 'RUV (ADT logcounts) vs Day treatment')
+
+plot_UMAP(
+  adt_metrics@UMAPs$fastRUVIII_supervised, 
+  adt_metrics@Metadata$log2_adt_libsize, run_umap = F, 
+  title = 'RUV (ADT logcounts) vs libsize', label_is_continuous = T)
+
+#plot_UMAP(adt_metrics@UMAPs$CLR, rna_metrics@Metadata$Day_Treatment, run_umap = F)
+#plot_UMAP(adt_metrics@UMAPs$CLR, rna_metrics@Metadata$capture, run_umap = F)
+plot_UMAP(
+  adt_metrics@UMAPs$Raw_counts, rna_metrics@Metadata$Day_Treatment, 
+  run_umap = F, title = 'Raw ADT counts vs Day treatment')
+
+plot_UMAP(
+  adt_metrics@UMAPs$Raw_counts, 
+  adt_metrics@Metadata$log2_adt_libsize, run_umap = F, 
+  title = 'ADT raw counts vs libsize', label_is_continuous = T)
+
+plot_UMAP(
+  rna_metrics@UMAPs$Raw_counts, rna_metrics@Metadata$Day_Treatment, 
+  run_umap = F, title = 'Raw RNA counts vs Day treatment')
+
+plot_UMAP(
+  rna_metrics@UMAPs$Raw_counts, 
+  rna_metrics@Metadata$log2_rna_libsize, run_umap = F, 
+  title = 'Raw RNA counts vs libsize', label_is_continuous = T)
 
 ```
 
@@ -187,427 +226,1160 @@ View(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
 ```
 
 
+# WNN on the RUV normalized data
+```{r}
+
+nk_data@reductions$fastRUVIII_rna_pca <- Seurat::CreateDimReducObject(
+  embeddings = rna_metrics@PCs$fastRUVIII_supervised, key = 'fastRUVIIIrna_')
+nk_data@reductions$fastRUVIII_adt_pca <- Seurat::CreateDimReducObject(
+  embeddings = adt_metrics@PCs$fastRUVIII_supervised, key = 'fastRUVIIIadt_', assay = "ADT")
+
+nk_data <- Seurat::FindMultiModalNeighbors(
+  nk_data, 
+  reduction.list = list("fastRUVIII_rna_pca", "fastRUVIII_adt_pca"),
+  dims.list = list(1:30, 1:13))
+
+nk_data <- RunUMAP(nk_data, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+
+```
+
+
+
+```{r}
+DimPlot(nk_data, reduction = "wnn.umap", group.by = "Day_Treatment")
+DimPlot(nk_data, reduction = "wnn.umap", group.by = "Day")
+DimPlot(nk_data, reduction = "wnn.umap", group.by = "Treatment")
+DimPlot(nk_data, reduction = "wnn.umap", group.by = "genetic_donor")
+
+plot_UMAP(
+  nk_data@reductions$wnn.umap@cell.embeddings, nk_data$log2_rna_libsize, 
+  run_umap = F, title = 'Treatment vs RNA libsize', 
+  label_is_continuous = T, aspect_ratio = 0.6, alpha = 0.4)
+
+plot_UMAP(
+  nk_data@reductions$wnn.umap@cell.embeddings, nk_data$log2_adt_libsize, 
+  run_umap = F, title = 'Treatment vs ADT libsize', 
+  label_is_continuous = T, aspect_ratio = 0.6, alpha = 0.4)
+
+
+VlnPlot(nk_data, features = "RNA.weight", group.by = 'Day_Treatment', sort = TRUE, pt.size = 0.01, alpha = 0.02 ) +
+  NoLegend()
+VlnPlot(nk_data, features = "ADT.weight", group.by = 'Day_Treatment', sort = TRUE, pt.size = 0.01, , alpha = 0.02 ) +
+  NoLegend()
+
+
+```
+
+
+# Trajectory analysis with slingshot on single treatments
+```{r}
+
+cytokine_subset <- CreateSeuratObject(counts = CreateAssayObject(rna_metrics@Raw_data[,nk_data$Treatment == "Cytokine"], key = "rna_"), assay = "RNA")
+cytokine_subset@assays$ADT <- CreateAssayObject(counts = adt_metrics@Raw_data[,nk_data$Treatment == "Cytokine"], key = "adt_")
+
+cytokine_matrix <- rna_metrics@Adj_data$fastRUVIII_supervised[,rna_metrics@Metadata$Treatment == "Cytokine"]
+pca <- run_PCA(cytokine_matrix, pcs = 30)
+
+cytokine_subset@reductions$fastRUVIII_rna_pca <- Seurat::CreateDimReducObject(
+  embeddings = pca$u, key = 'fastRUVIIIrna_')
+
+cytokine_adt_matrix <- adt_metrics@Adj_data$fastRUVIII_supervised[,adt_metrics@Metadata$Treatment == "Cytokine"]
+pca <- run_PCA(cytokine_adt_matrix, pcs = 13)
+cytokine_subset@reductions$fastRUVIII_adt_pca <- Seurat::CreateDimReducObject(
+  embeddings = pca$u, key = 'fastRUVIIIadt_', assay = "ADT")
+
+cytokine_subset <- Seurat::FindMultiModalNeighbors(
+  cytokine_subset, 
+  reduction.list = list("fastRUVIII_rna_pca", "fastRUVIII_adt_pca"),
+  dims.list = list(1:30, 1:13),)
+
+cytokine_subset <- RunUMAP(
+  cytokine_subset, nn.name = "weighted.nn", 
+  reduction.name = "wnn.umap", 
+  reduction.key = "wnnUMAP_", n.components = 3)
+
+cytokine_subset <- Seurat::FindClusters(
+  cytokine_subset, graph.name = "wsnn", algorithm = 3, 
+  resolution = 0.5, cluster.name = "wnn_clusters")
+
+
+```
 
 ```{r}
 
-frobenius_distance <- function(A, B) {
-  sqrt(sum((A - B)^2))
+cytokine_sce <- as.SingleCellExperiment(cytokine_subset)
+reducedDims(cytokine_sce)$UMAP <- Embeddings(cytokine_subset, "wnn.umap")
+
+reducedDims(cytokine_sce)$pca_adt_concat <- cbind(
+  Embeddings(cytokine_subset, "fastRUVIII_rna_pca")[,1:20], 
+  Embeddings(cytokine_subset, "fastRUVIII_adt_pca"))
+
+cytokine_sce$clusters <- cytokine_subset$wnn_clusters
+
+cytokine_sce <- slingshot::slingshot(
+  cytokine_sce, clusterLabels = 'clusters', 
+  reducedDim = 'WNN.UMAP', approx_points = 100)
+
+```
+
+
+
+```{r}
+# Get cell UMAP coordinates
+df <- as.data.frame(reducedDim(cytokine_sce, "WNN.UMAP"))
+df$cluster <- cytokine_sce$wnn_clusters
+df$Day <- nk_data$Day[nk_data$Treatment == "Cytokine"]
+df$rna_libsize <- nk_data$log2_rna_libsize[nk_data$Treatment == "Cytokine"]
+df$adt_libsize <- nk_data$log2_adt_libsize[nk_data$Treatment == "Cytokine"]
+df$donor <- nk_data$genetic_donor[nk_data$Treatment == "Cytokine"]
+
+# Start building plot
+p <- plotly::plot_ly(
+  data = df, 
+  x = ~wnnUMAP_1, 
+  y = ~wnnUMAP_2, 
+  z = ~wnnUMAP_3,
+  color = ~Day, 
+  type = "scatter3d", 
+  mode = "markers",
+  marker = list(size = 1), 
+  alpha = 0.8)
+
+# Add slingshot curves
+curves <- slingshot::slingCurves(cytokine_sce)
+for (crv in curves) {
+  crv_df <- as.data.frame(crv$s)[,1:3]  # Ensure only first 3 dimensions
+  colnames(crv_df) <- c("x", "y", "z")
+  
+  p <- p %>% 
+    plotly::add_paths(
+      data = crv_df,
+      x = ~x, y = ~y, z = ~z,
+      line = list(width = 4, color = "black"),
+      inherit = FALSE,  # Don't inherit properties from main plot
+      showlegend = FALSE
+    )
 }
 
+p  # show plot
 
-#' Back-transforms logcounts into counts
-#' @description Given a matrix, estimate the biology and random error and back transforms the 
-#' log-counts into counts, estimating each gene's smearing factor using the random error.
-#' @param x A matrix with samples as rows and features as columns
-#' @param l Number of PCs to estimate as biology. The rest will be used to estimate the random error.
-#' @return A list with the transformed data, a vector of smearing factors as floats, the estimated biology 
-#' matrix in log-space, and the estimated random error matrix in log-space.
-#' @export
 
-smearing_transformation <- function(x, l = 30){
-  x <- as(x, "CsparseMatrix")
+```
 
-  svd <- BiocSingular::runSVD(
-    x, k = l, center = F, scale = F, 
-    BSPARAM = BiocSingular::bsparam())
-  
-  b_matrix <- svd$u %*% diag(svd$d[1:l]) %*% t(svd$v)
-  e_matrix <- x - b_matrix
-  
-  # This needs to be changed based on if your original data is log base 2 or e
-  e <- colMeans(2^(e_matrix))
-  result <- round(sweep(2^(b_matrix), 2, e, FUN = "*")-1, digits = 0)
-  
-  return(list(
-    adjusted = result, 
-    smearing_factors = e, 
-    biology = b_matrix, 
-    errors = e_matrix))
+
+```{r}
+# ————————————————————————————————
+# Trajectory analysis with slingshot on Feeder treatment
+# ————————————————————————————————
+
+# 1. Subset into Seurat object
+feeder_subset <- CreateSeuratObject(
+  counts = CreateAssayObject(
+    rna_metrics@Raw_data[, nk_data$Treatment == "Feeder"],
+    key = "rna_"
+  ),
+  assay = "RNA"
+)
+feeder_subset@assays$ADT <- CreateAssayObject(
+  counts = adt_metrics@Raw_data[, nk_data$Treatment == "Feeder"],
+  key = "adt_"
+)
+
+# 2. FastRUVIII PCA on RNA
+feeder_matrix <- rna_metrics@Adj_data$fastRUVIII_supervised[, rna_metrics@Metadata$Treatment == "Feeder"]
+pca_rna <- run_PCA(feeder_matrix, pcs = 30)
+feeder_subset@reductions$fastRUVIII_rna_pca <- Seurat::CreateDimReducObject(
+  embeddings = pca_rna$u,
+  key = "fastRUVIIIrna_"
+)
+
+# 3. FastRUVIII PCA on ADT
+feeder_adt_matrix <- adt_metrics@Adj_data$fastRUVIII_supervised[, adt_metrics@Metadata$Treatment == "Feeder"]
+pca_adt <- run_PCA(feeder_adt_matrix, pcs = 13)
+feeder_subset@reductions$fastRUVIII_adt_pca <- Seurat::CreateDimReducObject(
+  embeddings = pca_adt$u,
+  key = "fastRUVIIIadt_",
+  assay = "ADT"
+)
+
+# 4. Build WNN graph + 3D UMAP
+feeder_subset <- Seurat::FindMultiModalNeighbors(
+  feeder_subset,
+  reduction.list = list("fastRUVIII_rna_pca", "fastRUVIII_adt_pca"),
+  dims.list      = list(1:30, 1:13)
+)
+feeder_subset <- RunUMAP(
+  feeder_subset,
+  nn.name        = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key  = "wnnUMAP_",
+  n.components   = 3
+)
+feeder_subset <- Seurat::FindClusters(
+  feeder_subset,
+  graph.name   = "wsnn",
+  algorithm    = 3,
+  resolution   = 0.5,
+  cluster.name = "wnn_clusters"
+)
+
+# 5. Convert to SingleCellExperiment & run Slingshot
+feeder_sce <- as.SingleCellExperiment(feeder_subset)
+reducedDims(feeder_sce)$UMAP <- Embeddings(feeder_subset, "wnn.umap")
+reducedDims(feeder_sce)$pca_adt_concat <- cbind(
+  Embeddings(feeder_subset, "fastRUVIII_rna_pca")[, 1:20],
+  Embeddings(feeder_subset, "fastRUVIII_adt_pca")
+)
+feeder_sce$clusters <- feeder_subset$wnn_clusters
+
+feeder_sce <- slingshot::slingshot(
+  feeder_sce,
+  clusterLabels  = "clusters",
+  reducedDim     = "WNN.UMAP",    # matches your Seurat UMAP naming
+  approx_points  = 100
+)
+
+```
+
+
+```{r}
+
+library(plotly)
+
+# Assemble a dataframe
+df_feeder <- as.data.frame(reducedDim(feeder_sce, "WNN.UMAP"))
+df_feeder$cluster      <- feeder_sce$clusters
+df_feeder$Day          <- nk_data$Day[nk_data$Treatment == "Feeder"]
+df_feeder$rna_libsize  <- nk_data$log2_rna_libsize[nk_data$Treatment == "Feeder"]
+df_feeder$adt_libsize  <- nk_data$log2_adt_libsize[nk_data$Treatment == "Feeder"]
+df_feeder$donor  <- nk_data$genetic_donor[nk_data$Treatment == "Feeder"]
+
+
+# Base 3D scatter
+p_feeder <- plot_ly(
+  data = df_feeder,
+  x    = ~wnnUMAP_1, y = ~wnnUMAP_2, z = ~wnnUMAP_3,
+  color = ~donor,
+  type  = "scatter3d",
+  mode  = "markers",
+  marker = list(size = 1),
+  alpha  = 0.8
+)
+
+# Overlay Slingshot curves
+feeder_curves <- slingshot::slingCurves(feeder_sce)
+for (crv in feeder_curves) {
+  crv_df <- as.data.frame(crv$s)[, 1:3]
+  colnames(crv_df) <- c("x", "y", "z")
+  p_feeder <- p_feeder %>%
+    add_paths(
+      data      = crv_df,
+      x         = ~x, y = ~y, z = ~z,
+      line      = list(width = 4, color = "black"),
+      inherit   = FALSE,
+      showlegend = FALSE
+    )
 }
 
-test_smear <- smearing_transformation(x=test_fastruv, l = 40)
-
-#frobenius_distance((exp(test_fastruv)-1) %>% round(digits = 0), as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
-#frobenius_distance(test_smear$adjusted, as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())
-
-hist(colMeans(test_smear$adjusted) - colMeans(as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t()))
-
-#plot(colSums(exp(t(test_nb@assays@data$logPAC))-1),colSums(test_smear$adjusted))
-#plot(rowSums(exp(t(test_nb@assays@data$logPAC))-1),rowSums(test_smear$adjusted))
-
-```
-
-
-```{r, fig.width= 7, fig.height= 7}
-colnames(test_smear$adjusted)[colVars((test_smear$adjusted)) > 4]
-#plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,1], test_smear$adjusted[,3])
-#plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,2], test_smear$adjusted[,4])
-#plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,4], test_smear$adjusted[,10])
-plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,'RPL22'], test_smear$adjusted[,'RPL22'])
-plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,'RPL11'], test_smear$adjusted[,'RPL11'])
-plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,'RPS8'], test_smear$adjusted[,'RPS8'])
-plot((as.matrix(exp(assay(test_nb,'logPAC'))-1) %>% t())[,'PTMA'], (test_smear$adjusted[,'PTMA']))
+p_feeder  # render the plot
 ```
 
 
 ```{r}
-#View(test_result[[1]])
-#View(test)
-hist(test_smear$errors[,1])
-hist(test_smear$errors[,2])
-hist(test_smear$errors[,3])
-hist(test_smear$errors[,4])
+
+subset <- rna_metrics@Metadata$Day_Treatment %in% c("Day3_Cytokine", "Baseline_Baseline")
+
+cytokine_day3_de <- wilcoxon_test(
+  rna_metrics@Adj_data$fastRUVIII_supervised[,subset],
+  variable = rna_metrics@Metadata$Day_Treatment[subset],
+  is.log = T)
+
+cytokine_day3_de <- cytokine_day3_de[cytokine_day3_de$Adj.pvalue != 0.00,] 
+cytokine_day3_de <- cytokine_day3_de[order(cytokine_day3_de$Adj.pvalue),] 
 
 ```
 
 
-
-# Testing DE analysis
 ```{r}
-# Pseudobulk per day_treatment per donor
-raw_pseudobulk <- rowsum(
-  t(rna_metrics@Raw_data), 
-  group = paste0(
-    rna_metrics@Metadata$Day_Treatment, 
-    rna_metrics@Metadata$genetic_donor)) %>% t()
+library(org.Hs.eg.db)
+library(clusterProfiler)
 
-group <- substr(colnames(raw_pseudobulk), 1, nchar(colnames(raw_pseudobulk)) - 7)
-
-dge <- edgeR::DGEList(
-  counts = raw_pseudobulk, 
-  group = group)
-
-keep <- filterByExpr(dge, group = group)
-dge <- dge[keep, , keep.lib.sizes = FALSE]
-dge <- calcNormFactors(dge)
-design <- model.matrix(~ group)
-dge <- estimateDisp(dge, design)
-
-# Fit the GLM
-fit <- glmFit(dge, design)
-
-# Perform likelihood ratio test
-lrt <- glmLRT(fit)
-
-# Get top differentially expressed genes
-topGenes <- topTags(lrt, n = Inf)
-
-# View results
-head(topGenes$table)
-
-
-```
-
-
-```{r, fig.height= 7}
-plotMD(lrt)
-
-results <- topGenes$table
-ggplot(results, aes(x = logFC, y = -log10(PValue))) +
-  geom_point() +
-  theme_minimal()
-
-```
-
-
-# GO enrichment
-```{r}
 hs <- org.Hs.eg.db
-top_genes <- rownames(results)[1:100]
 top_genes <- AnnotationDbi::select(hs, 
-       keys = top_genes,
+       keys = cytokine_day3_de$genes[1:100],
        columns = c("ENTREZID", "SYMBOL"),
        keytype = "SYMBOL")
-rm(hs)
+#rm(hs)
 
-plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID')
+plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = "BP")
+plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = "CC")
+plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = "MF")
 
-```
-
-# testing RUV adjusted data
-```{r}
-# Pseudobulk per day_treatment per donor
-ruv_smearing <- smearing_transformation(
-  rna_metrics@Adj_data$fastRUVIII_supervised, 
-  l = 40)
-
-ruv_smearing <- as(ruv_smearing$adjusted, "CsparseMatrix")
-
-
-
-```
-
-```{r}
-ruv_smearing@x[ruv_smearing@x < 0] <- 0
-ruv_smearing_pseudobulk <- rowsum(
-  t(ruv_smearing), 
-  group = paste0(
-    rna_metrics@Metadata$Day_Treatment, 
-    rna_metrics@Metadata$genetic_donor)) %>% t()
-
-group <- substr(colnames(ruv_smearing_pseudobulk), 1, nchar(colnames(ruv_smearing_pseudobulk)) - 7)
-
-ruv_dge <- edgeR::DGEList(
-  counts = ruv_smearing_pseudobulk, 
-  group = group)
-
-keep <- filterByExpr(ruv_dge, group = group)
-ruv_dge <- ruv_dge[keep, , keep.lib.sizes = FALSE]
-ruv_dge <- calcNormFactors(ruv_dge)
-design <- model.matrix(~ group)
-ruv_dge <- estimateDisp(ruv_dge, design)
-
-# Fit the GLM
-ruv_fit <- glmFit(ruv_dge, design)
-
-# Perform likelihood ratio test
-ruv_lrt <- glmLRT(ruv_fit)
-
-# Get top differentially expressed genes
-ruv_topGenes <- topTags(ruv_lrt, n = Inf)
-
-# View results
-head(ruv_topGenes$table)
-```
-
-```{r, fig.height= 7}
-plotMD(ruv_lrt)
-
-ruv_results <- ruv_topGenes$table
-ggplot(ruv_results, aes(x = logFC, y = -log10(PValue))) +
-  geom_point() +
-  theme_minimal()
-
-```
-
-# Also testing RUVIII-nb
-```{r}
-rna_ruvIIInb <- ruvIIInb::fastruvIII.nb(
-  as.matrix(t(rna_metrics@Raw_data)), 
-  M = ruv::replicate.matrix(rna_metrics@Metadata$Day_Treatment), 
-  ctl = rownames(rna_metrics@Raw_data) %in% ncgs,
-  k= 1, 
-  batch = as.numeric(rna_metrics@Metadata$capture))
-
-# as.matrix(exp(assay(test_nb,'logPAC'))-1)
-
-ruv_smearing_pseudobulk <- rowsum(
-  t(ruv_smearing), 
-  group = paste0(
-    rna_metrics@Metadata$Day_Treatment, 
-    rna_metrics@Metadata$genetic_donor)) %>% t()
-
-group <- substr(colnames(ruv_smearing_pseudobulk), 1, nchar(colnames(ruv_smearing_pseudobulk)) - 7)
-
-ruv_dge <- edgeR::DGEList(
-  counts = ruv_smearing_pseudobulk, 
-  group = group)
-
-keep <- filterByExpr(ruv_dge, group = group)
-ruv_dge <- ruv_dge[keep, , keep.lib.sizes = FALSE]
-ruv_dge <- calcNormFactors(ruv_dge)
-design <- model.matrix(~ group)
-ruv_dge <- estimateDisp(ruv_dge, design)
-
-# Fit the GLM
-ruv_fit <- glmFit(ruv_dge, design)
-
-# Perform likelihood ratio test
-ruv_lrt <- glmLRT(ruv_fit)
-
-# Get top differentially expressed genes
-ruv_topGenes <- topTags(ruv_lrt, n = Inf)
-
-# View results
-head(ruv_topGenes$table)
-```
-
-
-```{r, fig.height= 4.5, fig.width= 14}
-hs <- org.Hs.eg.db
-ruv_top_genes <- rownames(ruv_results)[1:100]
-ruv_top_genes <- AnnotationDbi::select(hs, 
-       keys = ruv_top_genes,
-       columns = c("ENTREZID", "SYMBOL"),
-       keytype = "SYMBOL")
-rm(hs)
-
-p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID') + ggtitle('RUV Smearing')
-p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID') + ggtitle('Raw counts')
-
-gridExtra::grid.arrange(p1, p2, ncol = 2)
-
-```
-
-
-```{r, fig.height= 4.5, fig.width= 14}
-p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'CC') + ggtitle('RUV Smearing')
-p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'CC') + ggtitle('Raw counts')
-
-gridExtra::grid.arrange(p1, p2, ncol = 2)
-
-```
-
-
-```{r, fig.height= 4.5, fig.width= 14}
-p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'MF') + ggtitle('RUV Smearing')
-p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'MF') + ggtitle('Raw counts')
-
-gridExtra::grid.arrange(p1, p2, ncol = 2)
 
 ```
 
 
 ```{r}
-smearing_transform_pcs <- run_PCA(ruv_smearing, pcs = 30)
-smearing_transform_umap <- uwot::umap(smearing_transform_pcs$u, n_neighbors = 30)
 
-plot_UMAP(
-  smearing_transform_umap, run_umap = F, 
-  metadata_vector = rna_metrics@Metadata$log2_rna_libsize, 
-  label_is_continuous = T, title = 'RUV smearing transformed UMAP vs libsize')
-plot_UMAP(
-  rna_metrics@UMAPs$Raw_counts, run_umap = F, 
-  metadata_vector = rna_metrics@Metadata$log2_rna_libsize, 
-  label_is_continuous = T, title = 'Raw counts UMAP vs libsize')
+all_conds <- unique(rna_metrics@Metadata$Day_Treatment)
+test_conds <- setdiff(all_conds, "Baseline_Baseline")
+de_gene_list <- list()
 
-plot_UMAP(
-  smearing_transform_umap, run_umap = F, 
-  metadata_vector = rna_metrics@Metadata$Day_Treatment, 
-  label_is_continuous = F, title = 'RUV smearing transformed UMAP vs Day treatment')
-plot_UMAP(
-  rna_metrics@UMAPs$Raw_counts, run_umap = F, 
-  metadata_vector = rna_metrics@Metadata$Day_Treatment, 
-  label_is_continuous = F, title = 'Raw counts UMAP vs Day treatment')
-
-```
-
-
-```{r, fig.height= 6, fig.width= 10}
-test <- BenchmarkMetrics(
-  c('RUV_logcounts', 'RUV_smearing_transformed', 'Raw_counts'), 
-  Raw_data = rna_metrics@Raw_data, 
-  Metadata = rna_metrics@Metadata)
-
-test@PCs$RUV_logcounts <- rna_metrics@PCs$fastRUVIII_supervised
-test@PCs$Raw_counts <- rna_metrics@PCs$Raw_counts
-test@PCs$RUV_smearing_transformed <- smearing_transform_pcs$u
-
-PlotMultipleCorrelations(test, c('capture','log2_rna_libsize', 'Day_Treatment'), titles = c('Batch', 'Libsize', 'Day_Treatment'))
-
-```
-
-
-```{r}
-#dummies <- fastDummies::dummy_cols(rna_metrics@Metadata$Day_Treatment)
-
-wilcox_tests <- list()
-
-for(group in unique(rna_metrics@Metadata$Treatment)){results <- wilcoxon_test(
-    as.matrix(rna_metrics@Raw_data), 
-    variable = ifelse(rna_metrics@Metadata$Treatment == group, 'a', 'b'))
-  wilcox_tests$group <- results}
-
-
-hs <- org.Hs.eg.db
-ruv_top_genes <- rownames(ruv_results)[1:100]
-ruv_top_genes <- AnnotationDbi::select(hs, 
-       keys = ruv_top_genes,
-       columns = c("ENTREZID", "SYMBOL"),
-       keytype = "SYMBOL")
-rm(hs)
-
-p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID') + ggtitle('RUV Smearing')
-p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID') + ggtitle('Raw counts')
-
-gridExtra::grid.arrange(p1, p2, ncol = 2)
-
-```
-
-
-```{r, fig.height= 4.5, fig.width= 14}
-p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'CC') + ggtitle('RUV Smearing')
-p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'CC') + ggtitle('Raw counts')
-
-gridExtra::grid.arrange(p1, p2, ncol = 2)
-
-```
-
-
-```{r, fig.height= 4.5, fig.width= 14}
-p2<- plot_GO_enrichment(ruv_top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'MF') + ggtitle('RUV Smearing')
-p1 <- plot_GO_enrichment(top_genes$ENTREZID, gene_id_type = 'ENTREZID', ontology = 'MF') + ggtitle('Raw counts')
-
-gridExtra::grid.arrange(p1, p2, ncol = 2)
-
-```
-
-
-
-
-```{r}
-ScheirerRayHare_test <- function(data, variable_1, variable_2, is.log = TRUE, pval_adj_method = 'BH', sort_by = NULL) {
-  # Non-parametric version of the two-way ANOVA. Requires the rcompanion package.
+# 2. loop over them
+for(cond in test_conds) {
+  message("Running DE for ", cond, " vs baseline…")
   
-  if (!requireNamespace("rcompanion", quietly = TRUE)) {
-    stop("The rcompanion package is needed for this function to work. Please install it.", call. = FALSE)
-  }
+  # 2a. subset cells to this cond + baseline
+  keep <- rna_metrics@Metadata$Day_Treatment %in% c(cond, "Baseline_Baseline")
   
-  if (!is.log) {
-    data <- log2(data + 1)
-  }
+  # 2b. run Wilcoxon
+  de_res <- wilcoxon_test(
+    rna_metrics@Adj_data$fastRUVIII_supervised[, keep],
+    variable = rna_metrics@Metadata$Day_Treatment[keep],
+    is.log = TRUE
+  ) %>%
+    filter(Adj.pvalue != 0) %>%
+    arrange(Adj.pvalue)
   
-  means <- rowMeans(data)
-  results <- data.frame(
-    Var1_chisq = numeric(),
-    Var1_PValue = numeric(),
-    Var1_Adj_PValue = numeric(),
-    Var2_chisq = numeric(),
-    Var2_PValue = numeric(),
-    Var2_Adj_PValue = numeric(),
-    Interaction_chisq = numeric(),
-    Interaction_PValue = numeric(),
-    Interaction_Adj_PValue = numeric(),
-    Mean = numeric()
+  # 2c. take top 100 symbols
+  top_syms <- head(de_res$genes, 100)
+  
+  # 2d. map to ENTREZ
+  ann <- AnnotationDbi::select(
+    org.Hs.eg.db,
+    keys     = top_syms,
+    keytype  = "SYMBOL",
+    columns  = c("ENTREZID","SYMBOL")
   )
   
-  if (!is.null(sort_by)) {
-    if (!(sort_by %in% colnames(results))) {
-      stop("The column you want to sort by doesn't exist. You can choose from: 'Var1_chisq', 'Var1_PValue', 'Var1_Adj_PValue', 'Var2_chisq', 'Var2_PValue', 'Var2_Adj_PValue', 'Interaction_chisq', 'Interaction_PValue', 'Interaction_Adj_PValue', 'Mean'.")
-    }}
-  
-  for (x in 1:nrow(data)) {
-    ranks <- rank(as.numeric(data[x, ]))
-    data_frame <- data.frame(ranks = ranks, variable_1 = variable_1, variable_2 = variable_2)
-    model <- rcompanion::scheirerRayHare(ranks ~ variable_1 * variable_2, data = data_frame)
-    
-    results[x, "Var1_chisq"] <- round(model$H[1], digits = 4)
-    results[x, "Var1_PValue"] <- model$p.value[1]
-    results[x, "Var2_chisq"] <- round(model$H[2], digits = 4)
-    results[x, "Var2_PValue"] <- model$p.value[2]
-    results[x, "Interaction_chisq"] <- round(model$H[3], digits = 4)
-    results[x, "Interaction_PValue"] <- model$p.value[3]
-    results[x, "Mean"] <- round(means[x], digits = 2)
-  }
-  
-  results$Var1_Adj_PValue <- p.adjust(results$Var1_PValue, method = pval_adj_method)
-  results$Var2_Adj_PValue <- p.adjust(results$Var2_PValue, method = pval_adj_method)
-  results$Interaction_Adj_PValue <- p.adjust(results$Interaction_PValue, method = pval_adj_method)
-  rownames(results) <- rownames(data)
-  
-  results <- results[order(results[[sort_by]]), ]
-  return(results)
+  de_gene_list[[cond]] <- ann
 }
 
+```
+
+```{r}
+plots <- list()
+for(list in names(de_gene_list)){
+  for(ont in c("BP","CC","MF")) {
+    plots[[paste0(list,"_",ont)]] <- plot_GO_enrichment(
+      de_gene_list[[list]]$ENTREZID,
+      gene_id_type = "ENTREZID",
+      ontology = ont)
+  }
+}
 
 ```
 
 
 
 
+
+# Trying DE analysis
 ```{r}
+# pseudobulking
+groups <- paste0(
+  rna_metrics@Metadata$Day_Treatment,"-",
+  #rna_metrics@Metadata$Treatment,"-",
+  rna_metrics@Metadata$capture,"-",
+  rna_metrics@Metadata$genetic_donor)
+
+pseudobulk_counts <- base::rowsum(t(as.matrix(rna_metrics@Raw_data)), group = groups) %>% t()
+
+# remove very lowly expressed genes after pseudobulking
+pseudobulk_counts <- pseudobulk_counts[(MatrixGenerics::rowMaxs(pseudobulk_counts) >= 5),]
+
+sample_names <- colnames(pseudobulk_counts)
+metadata <- tibble(
+  sample = sample_names,
+  day_treatment = str_split_fixed(sample_names, "-", 3)[, 1],
+  #day = str_split_fixed(sample_names, "-", 4)[, 1],
+  #treatment = str_split_fixed(sample_names, "-", 4)[, 2],
+  capture = str_split_fixed(sample_names, "-", 3)[, 2],
+  donor = str_split_fixed(sample_names, "-", 3)[, 3],
+  libsize = log2(colSums(pseudobulk_counts))
+)
+
+# Create DGEList
+dge <- DGEList(counts = pseudobulk_counts)
+dge <- calcNormFactors(dge, method = "TMM")
+
+# Create design matrix (e.g., comparing treatment groups, adjusting for donor)
+metadata$day_treatment <- factor(metadata$day_treatment)
+#metadata$treatment <- factor(metadata$treatment)
+metadata$donor <- factor(metadata$donor)
+design <- model.matrix(~ donor + capture + day_treatment, data = metadata)
+
+
+#  [1] "(Intercept)"                "donordonor_B"               "donordonor_C"               "donordonor_D"          
+#  [5] "donordonor_E"               "donordonor_F"               "captureC105_S2"             "captureC105_S3"      
+#  [9] "captureC105_S4"             "captureC105_S5"             "captureC105_S6"             "captureC105_S7"       
+# [13] "day_treatmentDay3_Cytokine" "day_treatmentDay3_Feeder"   "day_treatmentDay6_Cytokine" "day_treatmentDay6_Feeder"  
+# [17] "day_treatmentDay9_Cytokine" "day_treatmentDay9_Feeder"  
+
+
+```
+
+
+# edgeR
+```{r}
+library(edgeR)
+
+# Estimate dispersion
+dge <- estimateDisp(dge, design)
+
+# Fit model and test
+fit <- glmFit(dge, design)
+lrt <- glmLRT(fit, coef = "day_treatmentDay9_Feeder")  # Replace with actual contrast
+
+# Results
+edgeR_res <- topTags(lrt, n = Inf)$table
+
+```
+
+# limma
+```{r}
+library(limma)
+
+# Apply voom transformation
+v <- voom(dge, design, plot = TRUE)  # Optional diagnostic plot
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+
+# Results
+limma_results <- topTable(fit, coef = "donordonor_F", number = Inf)
+
+```
+# RUVIII
+```{r}
+
+matrix <- as(log2(pseudobulk_counts + 1), "dgCMatrix")
+
+de_ncg <- fastRUVIII::FindNCG(
+  matrix, 
+  metadata = metadata, 
+  bio_variables = c("day_treatment","donor"),
+  unwanted_variables = c("libsize", "capture"), 
+  sample_fraction = 1,
+  no.ncg = 300)
+
+de_prps <- fastRUVIII::CreatePRPC(
+  matrix, 
+  metadata = metadata, 
+  bio_vars = c("day_treatment"), 
+  uv_vars = c("libsize", "capture"), 
+  group_by_vars = c(NA, NA), 
+  separate_bins_by_biology = c(T, NA), 
+  sampling_amount = 1)
+
+de_ruv <- fastRUVIII::fastRUVIII(
+  matrix, 
+  k = 1, 
+  replicates = de_prps, 
+  control_genes = rownames(matrix) %in% de_ncg, 
+  apply_log = F
+)
+
+```
+
+```{r}
+# limma with RUV results
+fit <- lmFit(t(de_ruv$newY), design)
+fit <- eBayes(fit)
+
+# Results
+ruv_limma_results <- topTable(fit, coef = "donordonor_F", number = Inf)
+
+```
+
+
+# Plot results
+```{r}
+
+res <-limma_results  # or edgeR_res
+
+# Add significance flags
+res$significant <- res$adj.P.Val < 0.05 & abs(res$logFC) > 1
+
+ggplot(res, aes(x = logFC, y = -log10(P.Value), color = significant)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("grey", "red")) +
+  theme_minimal() +
+  labs(title = "Volcano plot", x = "log2 Fold Change", y = "-log10(p-value)")
+
+
+plotMA(res, main = "MA Plot")
+
+
+```
+
+
+
+```{r}
+
+res <-ruv_limma_results  # or edgeR_res
+
+# Add significance flags
+res$significant <- res$adj.P.Val < 0.05 & abs(res$logFC) > 1
+
+ggplot(res, aes(x = logFC, y = -log10(P.Value), color = significant)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("grey", "red")) +
+  theme_minimal() +
+  labs(title = "Volcano plot", x = "log2 Fold Change", y = "-log10(p-value)")
+
+
+plotMA(res, main = "MA Plot")
+
+
+```
+
+
+```{r}
+
+# Add significance flags
+edgeR_res$significant <- edgeR_res$FDR < 0.05 & abs(edgeR_res$logFC) > 1
+
+ggplot(edgeR_res, aes(x = logFC, y = -log10(PValue), color = significant)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("grey", "red")) +
+  theme_minimal() +
+  labs(title = "Volcano plot", x = "log2 Fold Change", y = "-log10(p-value)")
+
+
+limma::plotMA(edgeR_res, main = "MA Plot")
+
+```
+
+# using RUV W as a covariate
+```{r}
+metadata$W <- de_ruv$W[,1]
+design <- model.matrix(~ donor + capture + day_treatment + W, data = metadata)
+
+# Estimate dispersion
+dge <- estimateDisp(dge, design)
+
+# Fit model and test
+fit <- glmFit(dge, design)
+lrt <- glmLRT(fit, coef = "day_treatmentDay9_Feeder")  # Replace with actual contrast
+
+# Results
+edgeR_res <- topTags(lrt, n = Inf)$table
+
+
+v <- voom(dge, design, plot = TRUE)  # Optional diagnostic plot
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+
+# Results
+limma_results <- topTable(fit, coef = "day_treatmentDay9_Feeder", number = Inf)
+
+```
+
+```{r}
+
+res <-limma_results  # or edgeR_res
+
+# Add significance flags
+res$significant <- res$adj.P.Val < 0.05 & abs(res$logFC) > 1
+
+ggplot(res, aes(x = logFC, y = -log10(P.Value), color = significant)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("grey", "red")) +
+  theme_minimal() +
+  labs(title = "Volcano plot", x = "log2 Fold Change", y = "-log10(p-value)")
+
+
+plotMA(res, main = "MA Plot")
+
+
+```
+
+
+
+```{r}
+
+# Add significance flags
+edgeR_res$significant <- edgeR_res$FDR < 0.05 & abs(edgeR_res$logFC) > 1
+
+ggplot(edgeR_res, aes(x = logFC, y = -log10(PValue), color = significant)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("grey", "red")) +
+  theme_minimal() +
+  labs(title = "Volcano plot", x = "log2 Fold Change", y = "-log10(p-value)")
+
+
+limma::plotMA(edgeR_res, main = "MA Plot")
+
+```
+
+
+```{r, fig.width= 10}
+
+mean_control <- rowMeans(
+  rna_metrics@Adj_data$fastRUVIII_supervised[de_gene_list$Day9_Cytokine$SYMBOL, rna_metrics@Metadata$Treatment == "Baseline"])
+mean_treatment <- rowMeans(
+  rna_metrics@Adj_data$fastRUVIII_supervised[de_gene_list$Day9_Cytokine$SYMBOL, rna_metrics@Metadata$Day_Treatment == "Day9_Cytokine"])
+
+# Since it's in log2 scale, just subtract:
+log2_fc <- mean_treatment - mean_control
+
+plot_data <- data.frame(Gene = de_gene_list$Day9_Cytokine$SYMBOL, log2FC = log2_fc)
+
+ggplot(plot_data[1:50,], aes(x = Gene, y = log2FC, fill = log2FC > 0)) +
+  geom_col() +
+  labs(title = "Log2 Fold Change from Log-Normalized Data", y = "log2 Fold Change") +
+  scale_fill_manual(values = c("red", "blue"), guide = "none") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+```{r, fig.width= 10}
+mean_control <- rowMeans(
+  (rna_metrics@Adj_data$totalVI[
+    rownames(rna_metrics@Adj_data$totalVI) %in% 
+      de_gene_list$Day9_Cytokine$SYMBOL, 
+    rna_metrics@Metadata$Treatment == "Baseline"]))
+
+mean_treatment <- rowMeans(
+  (rna_metrics@Adj_data$totalVI[
+    rownames(rna_metrics@Adj_data$totalVI) %in% 
+      de_gene_list$Day9_Cytokine$SYMBOL, 
+    rna_metrics@Metadata$Day_Treatment == "Day9_Cytokine"]))
+
+# Since it's in log2 scale, just subtract:
+log2_fc <- mean_treatment - mean_control
+
+plot_data <- data.frame(
+  Gene = rownames(rna_metrics@Adj_data$totalVI)[
+    rownames(rna_metrics@Adj_data$totalVI) %in% 
+      de_gene_list$Day9_Cytokine$SYMBOL
+    ], 
+  log2FC = log2_fc)
+
+ggplot(plot_data[1:50,], aes(x = Gene, y = log2FC, fill = log2FC > 0)) +
+  geom_col() +
+  labs(title = "Log2 Fold Change from Log-Normalized Data", y = "log2 Fold Change") +
+  scale_fill_manual(values = c("red", "blue"), guide = "none") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r, fig.width= 10}
+mean_control <- rowMeans(
+  (rna_metrics@Adj_data$SCTransform[
+    rownames(rna_metrics@Adj_data$SCTransform) %in% 
+      de_gene_list$Day9_Cytokine$SYMBOL, 
+    rna_metrics@Metadata$Treatment == "Baseline"]))
+
+mean_treatment <- rowMeans(
+  (rna_metrics@Adj_data$SCTransform[
+    rownames(rna_metrics@Adj_data$SCTransform) %in% 
+      de_gene_list$Day9_Cytokine$SYMBOL, 
+    rna_metrics@Metadata$Day_Treatment == "Day9_Cytokine"]))
+
+# Since it's in log2 scale, just subtract:
+log2_fc <- mean_treatment - mean_control
+
+plot_data <- data.frame(
+  Gene = rownames(rna_metrics@Adj_data$SCTransform)[
+    rownames(rna_metrics@Adj_data$SCTransform) %in% 
+      de_gene_list$Day9_Cytokine$SYMBOL
+    ], 
+  log2FC = log2_fc)
+
+ggplot(plot_data[1:50,], aes(x = Gene, y = log2FC, fill = log2FC > 0)) +
+  geom_col() +
+  labs(title = "Log2 Fold Change from Log-Normalized Data", y = "log2 Fold Change") +
+  scale_fill_manual(values = c("red", "blue"), guide = "none") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r}
+# Define marker pairs
+markers <- DataFrame(
+  RNA = c("IL2RA", "CD69", "TFRC"),
+  ADT = c("CD25", "CD69", "CD71")
+
+)
+
+# RNA only: 'IFNG', 'TNF', 'XCL1', 'XCL2', 'FGFBP2', ADT only: "CD226-DNAM-1"
+
+method1 <- "totalVI"
+method2 <- "totalVI"
+marker <- 3
+
+spearman <- cor(
+  rna_metrics@Adj_data[[method1]][markers$RNA[marker],], 
+  adt_metrics@Adj_data[[method2]][markers$ADT[marker],], 
+  method = "spearman")
+pearson  <- cor(
+  rna_metrics@Adj_data[[method1]][markers$RNA[marker],], 
+  adt_metrics@Adj_data[[method2]][markers$ADT[marker],], 
+  method = "pearson")
+
+spearman_ls <- cor(
+  rna_metrics@Adj_data[[method1]][markers$RNA[marker],], 
+  rna_metrics@Metadata$log2_rna_libsize, 
+  method = "spearman")
+spearman_ls2 <- cor(
+  adt_metrics@Adj_data[[method2]][markers$ADT[marker],], 
+  adt_metrics@Metadata$log2_adt_libsize, 
+  method = "spearman")
+
+print(paste0("Correlations for ", method1, " and ",method2," for ",markers$RNA[marker], " and ", markers$ADT[marker]))
+print(paste0("Spearman: ", spearman))
+print(paste0("Pearson: ", pearson))
+print(paste0("Spearman RNA libsize: ", spearman_ls))
+print(paste0("Spearman ADT libsize: ", spearman_ls2))
+
+```
+
+
+```{r}
+#df$cell <- factor(df$cell, levels = df$cell)
+
+# 1. Define your samples in the order you want (e.g. day3 first, then day6)
+#sample <- colnames(sce)[ order(colData(sce)$condition) ]
+
+# 2. Choose the gene you want to plot
+gene   <- "TFRC"
+order1 <- rna_metrics@Adj_data[[method1]][gene, order(rna_metrics@Metadata$log2_rna_libsize)] %>% log2()
+#order1 <- rna_metrics@Raw_data[gene, order(rna_metrics@Metadata$log2_rna_libsize)] %>% log2()
+#order1 <- test$W[order(rna_metrics@Metadata$log2_rna_libsize)]
+
+ggplot(
+  mapping = aes(
+    y     = order1,
+    x     = 1:length(order1),
+    color = rna_metrics@Metadata$log2_rna_libsize[order(rna_metrics@Metadata$log2_rna_libsize)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  scale_color_viridis(option = "viridis") +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  )
+
+```
+
+```{r}
+#df$cell <- factor(df$cell, levels = df$cell)
+
+# 1. Define your samples in the order you want (e.g. day3 first, then day6)
+#sample <- colnames(sce)[ order(colData(sce)$condition) ]
+
+# 2. Choose the gene you want to plot
+gene   <- "TFRC"
+order1 <- rna_metrics@Adj_data[[method1]][gene, order(rna_metrics@Metadata$Day_Treatment)] %>% log2()
+#order1 <- rna_metrics@Raw_data[gene, order(rna_metrics@Metadata$Day_Treatment)] %>% log2()
+#order1 <- test$W[order(rna_metrics@Metadata$Day_Treatment)]
+
+ggplot(
+  mapping = aes(
+    y     = order1,
+    x     = 1:length(order1),
+    color = rna_metrics@Metadata$Day_Treatment[order(rna_metrics@Metadata$Day_Treatment)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  )
+
+
+```
+
+
+```{r}
+#df$cell <- factor(df$cell, levels = df$cell)
+
+# 1. Define your samples in the order you want (e.g. day3 first, then day6)
+#sample <- colnames(sce)[ order(colData(sce)$condition) ]
+
+# 2. Choose the gene you want to plot
+gene   <- "CD71"
+order2 <- adt_metrics@Adj_data[[method2]][gene, order(adt_metrics@Metadata$log2_adt_libsize)]
+
+ggplot(
+  mapping = aes(
+    y     = order2,
+    x     = 1:length(order2),
+    color = adt_metrics@Metadata$log2_adt_libsize[order(adt_metrics@Metadata$log2_adt_libsize)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  scale_color_viridis(option = "viridis") +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  )
+
+
+```
+
+```{r}
+order2 <- adt_metrics@Adj_data[[method2]][gene, order(adt_metrics@Metadata$Day_Treatment)]
+ggplot(
+  mapping = aes(
+    y     = order2,
+    x     = 1:length(order2),
+    color = adt_metrics@Metadata$Day_Treatment[order(adt_metrics@Metadata$Day_Treatment)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  )
+
+
+```
+
+
+```{r}
+ctl_ls <- colSums(rna_metrics@Raw_data[ncgs,]) %>% log2()
+plot_boxplot_categorical(ctl_ls, rna_metrics@Metadata$Day_Treatment, c("Ctl Libsize (log2)", "Day Treatment"))
+
+
+```
+
+# Running RUV separately per biology
+```{r}
+
+normalize_by_group <- function(
+    mat, 
+    group_lab, 
+    bio_vars, 
+    uv_vars, 
+    metadata, 
+    group_by_vars,
+    separate_bins_by_biology,
+    k, 
+    apply_log=TRUE) {
+  # record original cell order
+  orig_cells <- colnames(mat)
+
+  # split cell names by group
+  cells_by_group <- split(orig_cells, group_lab)
+
+  # for each group, subset and normalise
+  norm_list <- lapply(names(cells_by_group), function(group) {
+    cells <- cells_by_group[[group]]
+    #print(cells)
+    sub_mat <- mat[, cells]
+    sub_metadata <- metadata[cells,]
+    message(paste0("Creating PRPC for ", group, " (",length(cells), " cells)"))
+    sub_reps <- CreatePRPC(
+      sub_mat, 
+      uv_vars = uv_vars, 
+      metadata = sub_metadata, 
+      bio_vars = bio_vars, 
+      group_by_vars = group_by_vars, 
+      separate_bins_by_biology = separate_bins_by_biology
+      )
+    message("Finding NCGs")
+    sub_ncgs <- fastRUVIII::FindNCG(
+      sub_mat, unwanted_variables = uv_vars, 
+      bio_variables = bio_vars, 
+      no.ncg = 0.1*nrow(sub_mat),
+      metadata = sub_metadata, 
+      apply_log = apply_log, 
+      sample_fraction = 0.5
+      )
+    message("Starting RUVIII with K = ", k)
+    res <- fastRUVIII::fastRUVIII(
+      object        = as(sub_mat, "dgCMatrix"),
+      k             = k,
+      replicates    = sub_reps,
+      control_genes = sub_ncgs,
+      apply_log     = apply_log
+    )
+    # extract the corrected Y (cells × genes) and transpose back to genes × cells
+    t(res$newY)
+  })
+
+  # bind back into one big genes × cells matrix
+  combined <- do.call(cbind, norm_list)
+
+  # reorder columns to exactly the original cell order
+  combined <- combined[, orig_cells, drop=FALSE]
+
+  return(combined)
+}
+
+
+```
+
+
+```{r}
+
+ruv_split <- normalize_by_group(
+  rna_metrics@Raw_data,
+  group_lab = rna_metrics@Metadata$Day_Treatment, 
+  bio_vars = c("genetic_donor"), 
+  uv_vars = c("log2_rna_libsize", "capture"), 
+  metadata = rna_metrics@Metadata, group_by_vars = c("genetic_donor", NA), 
+  separate_bins_by_biology = c(TRUE, NA), 
+  k = 1, 
+  apply_log = TRUE)
+
+ruv_split_adt <- normalize_by_group(
+  adt_metrics@Raw_data,
+  group_lab = adt_metrics@Metadata$Day_Treatment, 
+  bio_vars = c("genetic_donor"), 
+  uv_vars = c("log2_rna_libsize", "capture"), 
+  metadata = adt_metrics@Metadata, group_by_vars = c("genetic_donor", NA), 
+  separate_bins_by_biology = c(TRUE, NA), 
+  k = 2, 
+  apply_log = TRUE)
+
+```
+
+
+```{r}
+gene <- "TFRC"
+order3 <- ruv_split[gene, order(rna_metrics@Metadata$log2_rna_libsize)]
+
+ggplot(
+  mapping = aes(
+    y     = order3,
+    x     = 1:length(order3),
+    color = rna_metrics@Metadata$log2_rna_libsize[order(rna_metrics@Metadata$log2_rna_libsize)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  scale_color_viridis(option = "viridis") +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  ) +
+  ggtitle("IL2RA expression ordered by libsize")
+
+```
+
+```{r}
+
+gene   <- "TFRC"
+order5 <- ruv_split[gene, order(rna_metrics@Metadata$Day_Treatment)]
+
+ggplot(
+  mapping = aes(
+    y     = order5,
+    x     = 1:length(order5),
+    color = rna_metrics@Metadata$Day_Treatment[order(rna_metrics@Metadata$Day_Treatment)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  ) +
+  ggtitle("IL2RA expression ordered by group")
+
+```
+
+
+```{r}
+
+gene   <- "IL2RA"
+order5 <- log2(rna_metrics@Raw_data[gene, order(rna_metrics@Metadata$Day_Treatment)]+1)
+
+ggplot(
+  mapping = aes(
+    y     = order5,
+    x     = 1:length(order5),
+    color = rna_metrics@Metadata$Day_Treatment[order(rna_metrics@Metadata$Day_Treatment)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  )
+
+```
+
+```{r}
+gene <- "IL2RA"
+order3 <- log2(rna_metrics@Raw_data[gene, order(rna_metrics@Metadata$log2_rna_libsize)]+ 1)
+
+ggplot(
+  mapping = aes(
+    y     = order3,
+    x     = 1:length(order3),
+    color = rna_metrics@Metadata$log2_rna_libsize[order(rna_metrics@Metadata$log2_rna_libsize)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  scale_color_viridis(option = "viridis") +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  )
+
+```
+
+```{r}
+
+gene   <- "CD71"
+order2 <- ruv_split_adt[gene, order(adt_metrics@Metadata$log2_adt_libsize)]
+
+ggplot(
+  mapping = aes(
+    y     = order2,
+    x     = 1:length(order2),
+    color = adt_metrics@Metadata$log2_adt_libsize[order(adt_metrics@Metadata$log2_adt_libsize)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  scale_color_viridis(option = "viridis") +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  )
+
+
+```
+
+```{r}
+order2 <- ruv_split_adt[gene, order(adt_metrics@Metadata$Day_Treatment)]
+ggplot(
+  mapping = aes(
+    y     = order2,
+    x     = 1:length(order2),
+    color = adt_metrics@Metadata$Day_Treatment[order(adt_metrics@Metadata$Day_Treatment)]
+  )
+) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  theme_minimal() +
+  labs(
+    x     = "Cells",
+    y     = paste0(gene, " expression"),
+    color = "Condition"
+  ) +
+  theme(
+    panel.border    = element_rect(colour = "grey60", fill = NA, size = 1.5),
+    aspect.ratio    = 1/2,
+    legend.position = "none"
+  )
+
+
+```
+
+```{r}
+
+hist(ruv_split["IL2RA",], main = "RUV Split")
+hist(log2(1+rna_metrics@Raw_data["IL2RA",]), main = "Raw counts log2 +1")
+hist(log2(rna_metrics@Adj_data$totalVI["IL2RA",]), main = "totalVI")
+plot(
+  rna_metrics@Metadata$log2_rna_libsize[rna_metrics@Metadata$Treatment == "Baseline"], 
+  log2(rna_metrics@Raw_data["IL2RA",rna_metrics@Metadata$Treatment == "Baseline"]+1))
+
+plot(
+  ruv_split["IL2RA",rna_metrics@Metadata$Treatment == "Baseline"], 
+  log2(rna_metrics@Raw_data["IL2RA",rna_metrics@Metadata$Treatment == "Baseline"]+1))
+
+plot(
+  rna_metrics@Adj_data$totalVI["IL2RA",rna_metrics@Metadata$Treatment == "Baseline"], 
+  log2(rna_metrics@Raw_data["IL2RA",rna_metrics@Metadata$Treatment == "Baseline"]+1))
+
+```
+
+
+
+```{r}
+# out_data <- list(
+#   fastRUVIII_rna = rna_metrics,
+#   fastRUVIII_adt = adt_metrics,
+#   cytokine_sce = cytokine_sce,
+#   feeder_sce = feeder_sce,
+#   de_gene_list = de_gene_list,
+#   ruv_split = ruv_split,
+#   ruv_split_adt = ruv_split_adt)
+# 
+# saveRDS(out_data, file = "/vast/scratch/users/liu.ne/nk_backup_objects.rds")
+
 # save.image(file= '/vast/scratch/users/liu.ne/nk_backup.RData')
 # load('/vast/scratch/users/liu.ne/nk_backup.RData')
+
+# try QS for quicker reading
+
+data <- readRDS("/vast/scratch/users/liu.ne/nk_backup_objects.rds")
+rna_metrics <- data$fastRUVIII_rna
+adt_metrics <- data$fastRUVIII_adt
+feeder_sce <- data[[4]]
+cytokine_sce <- data[[3]]
+de_gene_list <- data$de_gene_list
+ruv_split <- data$ruv_split
+ruv_split_adt <- data$ruv_split_adt
 
 ```
 
