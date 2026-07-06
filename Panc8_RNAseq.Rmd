@@ -16,9 +16,9 @@ library(SeuratData)
 library(Seurat)
 library(tidyr)
 #devtools::install('testPackage')
-library(testPackage)
+#library(testPackage)
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
-source('testPackage/R/Sc_helper_functions.R')
+#source('testPackage/R/Sc_helper_functions.R')
 
 ```
 
@@ -28,6 +28,7 @@ source('testPackage/R/Sc_helper_functions.R')
 data('panc8')
 
 ```
+
 # See how many cells of each celltype in each platform
 ```{r}
 plot_count_map(panc8@meta.data$dataset, panc8@meta.data$celltype, color_threshold = 3)
@@ -87,11 +88,33 @@ panc8_metrics <- testPackage::NormalizeRNA(panc8_metrics, batch_variable = 'data
 
 ```
 
+# RUVIII
+```{r}
+# Find NCGs
+ncgs <- RUVIIIPRPS::findNcgSupervised(
+  merged_rna_singlecellexperiment,
+  assay.name = 'RNA', 
+  bio.variables = 'celltype.l2_with_transfer', 
+  uv.variables = c('study', 'log2_libsize'),
+  save.se.obj = F,
+  assess.se.obj = F,
+  assess.ncg = T,
+  top.rank.bio.genes = 0.7,
+  top.rank.uv.genes = 0.7)
+
+panc8_metrics <- RunRUVIII(panc8_metrics, ncgs, k = 2, celltype = '')
+
+```
+
+
+
 ```{r}
 
 panc8_metrics <- testPackage::ComputeAssessments(panc8_metrics, variables = c('dataset', 'celltype'))
 
 ```
+
+
 ```{r, fig.width= 9, fig.height= 3}
 testPackage::PlotMultipleCorrelations(panc8_metrics, variables = c('dataset', 'celltype', 'log2_libsize'), titles = c('Platform', 'Celltypes', 'Libsize'))
 
@@ -117,6 +140,7 @@ p2 <- PlotARIs(panc8_metrics, 'dataset', title = 'Study ARI')
 gridExtra::grid.arrange(p1,p2, ncol=2)
 
 ```
+
 ```{r}
 PlotHVG_Conservation(panc8_metrics, 'dataset')
 
@@ -131,7 +155,7 @@ PlotRuntime(panc8_metrics, log= T)
 # Backup data
 ```{r}
 # save.image(file= '/vast/scratch/users/liu.ne/panc8_RNAseq_backup.RData')
-# load('/vast/scratch/users/liu.ne/panc8_RNAseq_backup.RData')
+load('/vast/scratch/users/liu.ne/panc8_RNAseq_backup.RData')
 
 ```
 
