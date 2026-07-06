@@ -22,7 +22,6 @@ library(cowplot)
 library(dplyr)
 library(ggplot2)
 library(devtools)
-library(umap)
 library(ggridges)
 library(viridis)
 library(mclust)
@@ -34,9 +33,9 @@ library(zellkonverter)
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
 
 # load our single cell specific helper functions from the local HPC directory
-source('Sc_helper_functions.R')
+#source('Sc_helper_functions.R')
 #devtools::install_github('Neal-Liu1/Single-cell-multi-omics-normalization/testPackage')
-devtools::install('testPackage')
+#devtools::install('testPackage')
 
 set.seed(42)
 
@@ -45,7 +44,7 @@ set.seed(42)
 # devtools::install_github("linnykos/tiltedCCA")
 library(tiltedCCA)
 # BiocManager::install("MOFA2")
-library(MOFA2)
+#library(MOFA2)
 
 # remotes::install_github("yezhengSTAT/ADTnorm")
 library(ADTnorm)
@@ -55,7 +54,7 @@ library(dsb)
 library(harmony)
 
 # Load fastRUVIII
-source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
+#source('~/Edited_HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 # source('~/HelperFunctions_scMultiOmics_SuperFastRUVIIIPrPs.R')
 
 # BiocManager::install("batchelor")
