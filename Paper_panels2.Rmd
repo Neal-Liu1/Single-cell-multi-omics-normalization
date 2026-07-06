@@ -11,13 +11,13 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Import libraries
 ```{r}
+#Sys.setenv(RETICULATE_PYTHON = "~/.venvs/leiden/bin/python")
 library(Seurat)
-library(tidyr)
+library(tidyverse)
 library(ggplot2)
-
-source("~/scMultiOmics-normalization/test_functions.R")
+library(gridExtra)
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
-source("~/scMultiOmics-normalization/testPackage/R/Sc_helper_functions.R")
+source("~/scMultiOmics-normalization/Sc_helper_functions.R")
 
 ```
 
@@ -30,7 +30,110 @@ doi: 10.1016/j.cell.2019.05.031.
 # SeuratData::InstallData("bmcite", destdir = '/vast/scratch/users/liu.ne')
 merged_data <- readRDS('/vast/scratch/users/liu.ne/combined_seurat.rds')
 bm_data <- merged_data
+
 ```
+
+
+
+
+
+
+
+
+# DATA SETUP
+```{r}
+
+triana_2021 <- readRDS(file = '/vast/scratch/users/liu.ne/41038073')
+
+DefaultAssay(triana_2021) <- 'RNA'
+triana_2021 <- NormalizeData(triana_2021) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA(reduction.name='rna_pca')
+triana_2021 <- Seurat::RunUMAP(triana_2021, reduction = 'rna_pca', dims = 1:30, reduction.name = 'rna_umap')
+
+DefaultAssay(triana_2021) <- 'AB'
+# VariableFeatures(triana_2021) <- rownames(triana_2021[["AB"]])
+triana_2021 <- RunPCA(triana_2021, reduction.name = 'adt_pca')
+triana_2021 <- RunUMAP(triana_2021, reduction = 'adt_pca', reduction.name = 'adt_umap', dims = 1:30)
+
+
+```
+
+## Filtering genes from both studies
+```{r}
+bm_genes_to_keep <- edgeR::filterByExpr(as.matrix(bm_data@assays$RNA@layers$counts), group= bm_data$celltype.l2, min.count = 1, min.total.count = 20)
+
+triana_genes_to_keep <- edgeR::filterByExpr(as.matrix(triana_2021@assays$RNA@counts), group= triana_2021$ct, min.count = 3.5, min.total.count = 20)
+
+common_genes <- intersect(rownames(bm_data@assays$RNA)[bm_genes_to_keep] ,rownames(triana_2021@assays$RNA@counts)[triana_genes_to_keep])
+
+```
+
+## Do SCTransform first on both datasets before label transfer
+```{r}
+
+bm_data2 <- CreateSeuratObject(counts = bm_data1@assays$RNA@layers$counts[rownames(bm_data@assays$RNA) %in% common_genes,])
+rownames(bm_data2) <- rownames(bm_data@assays$RNA)[rownames(bm_data@assays$RNA) %in% common_genes]
+bm_data2 <- Seurat::SCTransform(bm_data2)
+bm_data2 <- FindVariableFeatures(bm_data2)
+
+triana_2021_2 <- CreateSeuratObject(counts = triana_2021@assays$RNA@counts[rownames(triana_2021@assays$RNA@counts) %in% common_genes,], 
+                                    meta.data = triana_2021@meta.data)
+
+triana_2021_2 <- Seurat::SCTransform(triana_2021_2)
+
+```
+
+## Label transfer
+```{r}
+
+# For L1 celltypes
+anchors <- FindTransferAnchors(reference = bm_data2, 
+                               normalization.method = 'SCT',
+                               query = triana_2021_2, 
+                               dims = 1:30)
+
+predicted_celltypes <- TransferData(anchorset = anchors, refdata = bm_data$celltype.l1, dims = 1:30)
+triana_2021_2@meta.data$celltype.l1_with_transfer <- predicted_celltypes$predicted.id
+
+
+# For l2 celltypes
+predicted_celltypes2 <- TransferData(anchorset = anchors, refdata = bm_data$celltype.l2, dims = 1:30)
+triana_2021_2@meta.data$celltype.l2_with_transfer <- predicted_celltypes2$predicted.id
+
+
+# Plot max prediction scores to see how confident the predictions are
+hist(predicted_celltypes$prediction.score.max, main = 'Max predict. scores for l1 celltypes')
+hist(predicted_celltypes2$prediction.score.max, main = 'Max predict. scores for l2 celltypes')
+
+```
+
+## Merge the two studies into one Seurat
+```{r}
+
+# Deal with metadata shenanigans
+bm_data2$study <- 'Stuart_2019'
+triana_2021_2@assays$ADT@key <- 'adt_'
+triana_2021_2$study <- 'Triana_2021'
+bm_data2$supplied_celltype_l2 <- as.vector(bm_data$celltype.l2)
+triana_2021_2$supplied_celltype_l2 <- as.vector(triana_2021$ct)
+bm_data2$celltype.l1_with_transfer <- as.vector(bm_data$celltype.l1)
+bm_data2$celltype.l2_with_transfer <- as.vector(bm_data$celltype.l2)
+
+# merge 
+merged_data <- merge(bm_data2, triana_2021_2)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Run the other normalization methods for RNA and ADT
 ```{r}
@@ -78,6 +181,42 @@ adt_metrics <- NormalizeADT(
   adt_metrics, batch_variable = 'study', num_pcs = 13)
 
 ```
+
+
+# Setting up the universal colour palette for consistency across plots
+```{r}
+
+# Manual color scheme
+method_cols <- c(
+  # Shared across modalities
+  Raw_counts              = "#7A7A7A",  # neutral grey
+  totalVI                 = "#CC79A7",  # magenta (stands out, consistent)
+  fastRUVIII_supervised   = "#D55E00",  # vermillion
+  fastRUVIII_unsupervised = "#E69F00",  # orange
+
+  # RNA-specific
+  Seurat_LogNormalize     = "#0072B2",  # blue
+  SCTransform             = "#56B4E9",  # light blue
+  Seurat_rPCA             = "#009E73",  # green
+  Harmony_LogNormalize    = "#1B9E10",  # teal-green (distinct from Seurat_rPCA)
+  fastMNN                 = "#F0E442",  # yellow (high visibility)
+
+  # ADT-specific
+  ADTnorm                 = "#332288",  # deep indigo
+  CLR                     = "#117730",  # deep green (different family than Seurat_rPCA)
+  DSB                     = "#AA4499",  # purple
+  Harmony_CLR             = "#44AA99"   # aqua/teal (ADT harmony variant)
+)
+
+# Auto palette color scheme
+method_cols_hue <- scales::hue_pal()(length(method_cols))
+names(method_cols_hue) <- names(method_cols)
+
+
+
+```
+
+
 
 # Unsupervised prpc for fastRUVIII
 ```{r}
@@ -168,17 +307,24 @@ totalVI_rna <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_rna_m
 rna_metrics <- add_totalVI(rna_metrics, totalVI_rna, assay_name = 'rna_normalized', pca = T)
 adt_metrics <- add_totalVI(adt_metrics, totalVI_adt, assay_name = 'adt_normalized', pcs = 13)
 
+# totalVI_rna_counts <- rna_metrics@Adj_data$totalVI
+# rna_metrics@Adj_data$totalVI <- log2(totalVI_rna_counts+1e-8)
+rna_metrics@PCs$totalVI <- BiocSingular::runSVD(t(rna_metrics@Adj_data$totalVI), 30, center = T, BSPARAM = BiocSingular::bsparam())$u
+# 
+# totalVI_adt_counts <- adt_metrics@Adj_data$totalVI
+# adt_metrics@Adj_data$totalVI <- log2(totalVI_adt_counts+1e-8)
+adt_metrics@PCs$totalVI <- BiocSingular::runSVD(t(adt_metrics@Adj_data$totalVI), 13, center = T, BSPARAM = BiocSingular::bsparam())$u
 ```
 
 # Run fastRUVIII
 ```{r}
 rna_metrics <- RunRUVIII(
   rna_metrics, prpc = supervised_prpc_rna, ncgs = rownames(rna_metrics@Raw_data) %in% supervised_ncg, 
-  k = 6, name = 'fastRUVIII_supervised')
+  k = 20, name = 'fastRUVIII_supervised')
 
 rna_metrics <- RunRUVIII(
   rna_metrics, prpc = unsupervised_prpc_rna, ncgs = rownames(rna_metrics@Raw_data) %in% unsupervised_ncg, 
-  k = 6, name = 'fastRUVIII_unsupervised')
+  k = 20, name = 'fastRUVIII_unsupervised')
 
 adt_metrics <- RunRUVIII(
   adt_metrics, prpc = supervised_prpc_adt, ncgs = rep(T, nrow(adt_metrics@Raw_data)), 
@@ -190,60 +336,157 @@ adt_metrics <- RunRUVIII(
 
 ```
 
-# Plot metrics
-```{r, fig.height= 6, fig.width= 10, dev='svg'}
-p1 <- PlotMultipleCorrelations(rna_metrics, c('study','celltype.l2_with_transfer', 'log2_rna_libsize'), titles = c('Batch', 'Celltype', 'Libsize'))
-p2 <- PlotMultipleCorrelations(adt_metrics, c('study','celltype.l2_with_transfer', 'log2_adt_libsize'), titles = c('Batch', 'Celltype', 'Libsize'))
-gridExtra::grid.arrange(p1,p2, nrow = 2)
+
+# Try scMerge2
+```{r}
+
+# if(!"scMerge2" %in% rna_metrics@Algorithm)
+#   {rna_metrics@Algorithm <- c(rna_metrics@Algorithm, "scMerge2")}
+# 
+# scmerge_res <- scMerge::scMerge2(
+#   log2(rna_metrics@Raw_data+1), 
+#   cellTypes = rna_metrics@Metadata$celltype.l2_with_transfer, 
+#   batch = rna_metrics@Metadata$study,
+#   ruvK =  20)
+# 
+# rna_metrics@Adj_data$scMerge2 <- scmerge_res$newY %>% as("dgCMatrix")
+# rna_metrics@PCs$scMerge2 <- run_PCA(scmerge_res$newY, pcs = 30)$u
+
+# rna_metrics@Adj_data$scMerge2 <- NULL
+# rna_metrics@PCs$scMerge2 <- NULL
+# rna_metrics@Algorithm <- rna_metrics@Algorithm[1:9]
+
+
 ```
 
-# Compute assessments 
+
+
+# Plot metrics
+```{r, fig.height= 6, fig.width= 10, dev='svg'}
+p1 <- PlotMultipleCorrelations(
+  rna_metrics,
+  c("study", "celltype.l2_with_transfer", "log2_rna_libsize"),
+  titles = c("Batch", "Celltype", "Libsize"),
+  num_pcs = 10,
+  palette = method_cols_hue
+)
+
+p2 <- PlotMultipleCorrelations(
+  adt_metrics,
+  c("study", "celltype.l2_with_transfer", "log2_adt_libsize"),
+  titles = c("Batch", "Celltype", "Libsize"),
+  num_pcs = 10,
+  palette = method_cols_hue
+)
+
+gridExtra::grid.arrange(p1,p2, nrow = 2)
+
+```
+
+
+
+# Compute assessments (This might take a while, maybe one or two hours)
 ```{r}
 adt_metrics <- ComputeAssessments(adt_metrics, c('celltype.l2_with_transfer', 'study'))
 rna_metrics <- ComputeAssessments(rna_metrics, c('celltype.l2_with_transfer', 'study'))
 
-adt_neighbours <- lapply(adt_metrics@PCs, function(x){Seurat::FindNeighbors(x)[['snn']]})
-rna_neighbours <- lapply(rna_metrics@PCs, function(x){Seurat::FindNeighbors(x)[['snn']]})
+adt_metrics <- ComputeARIs(
+  adt_metrics, 'celltype.l2_with_transfer')
 
 adt_metrics <- ComputeARIs(
-  adt_metrics, 'celltype.l2_with_transfer', neighbours = adt_neighbours, 
-  clust_resolution = c(0.8, 0.8, 1.15, 1.05, 0.9, 0.5, 1.8, 1.8))
-
-adt_metrics <- ComputeARIs(
-  adt_metrics, 'study', neighbours = adt_neighbours, 
-  clust_resolution = c(0.03, 0.03, 0.03, 0.03, 0.03, 0.005, 0.02, 0.02))
+  adt_metrics, 'study')
 
 rna_metrics <- ComputeARIs(
-  rna_metrics, 'celltype.l2_with_transfer', neighbours = rna_neighbours, 
-  clust_resolution = c(1.1, 0.7, 0.8, 0.85, 0.6, 1.3, 0.6, 1.1, 0.7))
+  rna_metrics, 'celltype.l2_with_transfer')
 
 rna_metrics <- ComputeARIs(
-  rna_metrics, 'study', neighbours = rna_neighbours, 
-  clust_resolution = c(0.02, 0.02, 0.02, 0.02, 0.02, 0.01, 0.02, 0.02, 0.02))
-
-# rna_metrics@ARI$celltype.l2$fastRUVIII_supervised <- mclust::adjustedRandIndex(rna_metrics@Metadata$celltype.l2, Seurat::FindClusters(rna_neighbours$fastRUVIII_supervised, resolution = 2, algorithm = 3)[,1])
-# rna_metrics@ARI$celltype.l2$fastRUVIII_unsupervised <- mclust::adjustedRandIndex(rna_metrics@Metadata$celltype.l2, Seurat::FindClusters(rna_neighbours$fastRUVIII_unsupervised, resolution = 2, algorithm = 3)[,1])
+  rna_metrics, 'study')
 
 ```
 
 
-```{r, fig.width= 11, fig.height= 4}
-p3 <- PlotARIs(adt_metrics, c('celltype.l2_with_transfer'), title = 'ADT Celltype ARI')
+```{r, fig.width= 6, fig.height= 4}
+gradient_palette <- colorRampPalette(c("#e7ebf7", "#90add9"))
+colors <- gradient_palette(length(rna_metrics@Algorithm))
+
+# p3 <- PlotARIs(adt_metrics, c('celltype.l2_with_transfer'), title = 'ADT Celltype ARI') + scale_fill_manual(values = colors)
 # p4 <- PlotMultipleSilhouette(adt_metrics, variable = 'celltype.l2_with_transfer', title = 'Silhouettes per celltype', plot_type = 'boxplot')
-p4 <- PlotARIs(adt_metrics, c('study'), title = 'Batch ARI')
-p5 <- PlotMultipleLISI(adt_metrics, variable = c('celltype.l2_with_transfer'), title = 'Celltype LISI', levels = adt_metrics@Algorithm)
-p6 <- PlotMultipleLISI(adt_metrics, variable = c('study'), title = 'Batch LISI', levels = adt_metrics@Algorithm)
-gridExtra::grid.arrange(p3, p4, p5, p6, ncol = 4)
+# p4 <- PlotARIs(adt_metrics, c('study'), title = 'Batch ARI') + scale_fill_manual(values = colors)
+p5 <- PlotMultipleLISI(adt_metrics, variable = c('celltype.l2_with_transfer'), title = 'ADT Celltype LISI', levels = adt_metrics@Algorithm) + 
+  scale_fill_manual(values = colors)
+p6 <- PlotMultipleLISI(adt_metrics, variable = c('study'), title = 'ADT Batch LISI', levels = adt_metrics@Algorithm) +
+  scale_fill_manual(values = colors)
+gridExtra::grid.arrange(p5, p6, ncol = 2)
 ```
 
 
-```{r, fig.width= 11, fig.height= 4}
-p3 <- PlotARIs(rna_metrics, c('celltype.l2_with_transfer'), title = 'RNA Celltype ARI')
-p4 <- PlotARIs(rna_metrics, c('study'), title = 'Batch ARI')
-# p4 <- PlotMultipleSilhouette(rna_metrics, variable = 'celltype.l2_with_transfer', title = 'Silhouettes per celltype', plot_type = 'boxplot')
-p5 <- PlotMultipleLISI(rna_metrics, variable = c('celltype.l2_with_transfer'), title = 'Celltype LISI', levels = adt_metrics@Algorithm)
-p6 <- PlotMultipleLISI(rna_metrics, variable = c('study'), title = 'Batch LISI', levels = adt_metrics@Algorithm)
-gridExtra::grid.arrange(p3,p4,p5,p6, ncol = 4)
+```{r, fig.width= 6, fig.height= 4}
+# p3 <- PlotARIs(rna_metrics, c('celltype.l2_with_transfer'), title = 'RNA Celltype ARI') + 
+#   scale_fill_manual(values = colors)
+# p4 <- PlotARIs(rna_metrics, c('study'), title = 'Batch ARI') +
+#   scale_fill_manual(values = colors)
+
+p5 <- PlotMultipleLISI(rna_metrics, variable = c('celltype.l2_with_transfer'), title = 'RNA Celltype LISI', levels = adt_metrics@Algorithm) +
+  scale_fill_manual(values = colors)
+p6 <- PlotMultipleLISI(rna_metrics, variable = c('study'), title = 'RNA Batch LISI', levels = adt_metrics@Algorithm) +
+  scale_fill_manual(values = colors)
+gridExtra::grid.arrange(p5,p6, ncol = 2)
+```
+
+
+# Plot Clustering metrics
+```{r,fig.width= 12}
+df_ct_rna <- data.frame(
+  Method = rna_metrics@ARI$celltype.l2_with_transfer$results_df$method,
+  AMI_celltype = unlist(rna_metrics@ARI$celltype.l2_with_transfer$results_df$AMI),
+  ARI_celltype = unlist(rna_metrics@ARI$celltype.l2_with_transfer$results_df$ARI),
+  knn = rna_metrics@ARI$celltype.l2_with_transfer$results_df$k,
+  res = rna_metrics@ARI$celltype.l2_with_transfer$results_df$gamma
+)
+
+df_batch_rna <- data.frame(
+  Method = rna_metrics@ARI$study$results_df$method,
+  AMI_celltype = unlist(rna_metrics@ARI$study$results_df$AMI),
+  ARI_celltype = unlist(rna_metrics@ARI$study$results_df$ARI),
+  knn = rna_metrics@ARI$study$results_df$k,
+  res = rna_metrics@ARI$study$results_df$gamma
+)
+
+p4_rna <- plot_ami_ari(df_ct_rna, "AMI & ARI of RNA Methods on celltypes", palette = method_cols_hue)
+p5_rna <- plot_ami_ari(df_batch_rna, "AMI & ARI of RNA Methods on Batch", palette = method_cols_hue)
+
+gridExtra::grid.arrange(p4_rna, p5_rna, ncol = 2)
+
+
+```
+
+
+```{r, fig.width= 12}
+
+df_ct_adt <- data.frame(
+  Method = adt_metrics@ARI$celltype.l2_with_transfer$results_df$method,
+  AMI_celltype = unlist(adt_metrics@ARI$celltype.l2_with_transfer$results_df$AMI),
+  ARI_celltype = unlist(adt_metrics@ARI$celltype.l2_with_transfer$results_df$ARI),
+  knn = adt_metrics@ARI$celltype.l2_with_transfer$results_df$k,
+  res = adt_metrics@ARI$celltype.l2_with_transfer$results_df$gamma
+)
+
+df_batch_adt <- data.frame(
+  Method = adt_metrics@ARI$study$results_df$method,
+  AMI_celltype = unlist(adt_metrics@ARI$study$results_df$AMI),
+  ARI_celltype = unlist(adt_metrics@ARI$study$results_df$ARI),
+  knn = adt_metrics@ARI$study$results_df$k,
+  res = adt_metrics@ARI$study$results_df$gamma
+)
+
+p4_adt <- plot_ami_ari(df_ct_adt, "AMI & ARI of ADT Methods on celltypes", palette = method_cols_hue)
+p5_adt <- plot_ami_ari(df_batch_adt, "AMI & ARI of ADT Methods on Batch", palette = method_cols_hue)
+
+gridExtra::grid.arrange(p4_adt, p5_adt, ncol = 2)
+
+
+
+
 ```
 
 
@@ -265,16 +508,12 @@ rna_metrics <- ComputeUMAP(rna_metrics, method = 'uwot')
 
 ```
 
-```{r, fig.width= 9, fig.height= 3}
-# These need to be required in the function
-library(viridis)
-library(cowplot)
-
-method = 'fastRUVIII_unsupervised'
+```{r, fig.width= 10, fig.height= 4}
+method = 'Raw_counts'
 
 p1 <- plot_UMAP(
   rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$log2_rna_libsize, 
-  title = 'fastRUVIII_unsupervised libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 12.7)
+  title = 'Raw counts: libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 12.7)
 p2 <- plot_UMAP(
   rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$study, 
   title = 'Batch', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
@@ -286,12 +525,73 @@ gridExtra::grid.arrange(p1,p2,p3, ncol = 3)
 
 ```
 
-```{r, fig.width= 9, fig.height= 3}
+
+
+```{r, fig.width= 10, fig.height= 4}
+# These need to be required in the function
+library(viridis)
+library(cowplot)
+
+method = 'scMerge2'
+
+p1 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$log2_rna_libsize, 
+  title = 'scMerge2: libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 12.7)
+p2 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$study, 
+  title = 'Batch', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+p3 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$celltype.l2_with_transfer, 
+  title = 'Celltype', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+
+gridExtra::grid.arrange(p1,p2,p3, ncol = 3)
+
+```
+
+
+```{r, fig.width= 10, fig.height= 4}
+
+method = 'fastRUVIII_unsupervised'
+
+p1 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$log2_rna_libsize, 
+  title = 'fastRUVIII_unsupervised: libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 12.7)
+p2 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$study, 
+  title = 'Batch', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+p3 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$celltype.l2_with_transfer, 
+  title = 'Celltype', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+
+gridExtra::grid.arrange(p1,p2,p3, ncol = 3)
+
+```
+
+```{r, fig.width= 10, fig.height= 4}
+
+method = 'totalVI'
+
+p1 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$log2_rna_libsize, 
+  title = 'totalVI: libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 12.7)
+p2 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$study, 
+  title = 'Batch', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+p3 <- plot_UMAP(
+  rna_metrics@UMAPs[[method]], metadata_vector = rna_metrics@Metadata$celltype.l2_with_transfer, 
+  title = 'Celltype', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+
+gridExtra::grid.arrange(p1,p2,p3, ncol = 3)
+
+```
+
+
+```{r, fig.width= 10, fig.height= 4}
 method = 'fastRUVIII_unsupervised'
 
 p1 <- plot_UMAP(
   adt_metrics@UMAPs[[method]], metadata_vector = adt_metrics@Metadata$log2_adt_libsize, 
-  title = 'fastRUVIII_unsupervised libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 13.5)
+  title = 'fastRUVIII_unsupervised ADT: libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 13.5)
 p2 <- plot_UMAP(
   adt_metrics@UMAPs[[method]], metadata_vector = adt_metrics@Metadata$study, 
   title = 'Batch', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
@@ -302,6 +602,24 @@ p3 <- plot_UMAP(
 gridExtra::grid.arrange(p1,p2,p3, ncol = 3)
 
 ```
+
+```{r, fig.width= 10, fig.height= 4}
+method = 'totalVI'
+
+p1 <- plot_UMAP(
+  adt_metrics@UMAPs[[method]], metadata_vector = adt_metrics@Metadata$log2_adt_libsize, 
+  title = 'totalVI ADT: libsize', run_umap = F, label_is_continuous = T, alpha = 0.4, continuous_var_upper_lim = 13.5)
+p2 <- plot_UMAP(
+  adt_metrics@UMAPs[[method]], metadata_vector = adt_metrics@Metadata$study, 
+  title = 'Batch', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+p3 <- plot_UMAP(
+  adt_metrics@UMAPs[[method]], metadata_vector = adt_metrics@Metadata$celltype.l2_with_transfer, 
+  title = 'Celltype', run_umap = F, label_is_continuous = F, alpha = 0.4, show_density = F)
+
+gridExtra::grid.arrange(p1,p2,p3, ncol = 3)
+
+```
+
 
 
 ```{r}
@@ -484,10 +802,32 @@ plot_3D_PCA(
 
 
 ```{r}
+
+df <- rna_metrics@UMAPs$totalVI
+df$metadata <- rna_metrics$
+
+ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
+      geom_point(size = 0.07, alpha = alpha) +
+      ggtitle(title) +
+      theme_minimal() +
+      theme(axis.line = element_line(colour = "grey50", linewidth = 0.9),
+            panel.border = element_blank(),  #element_rect(colour = "grey90", fill=NA, size=0.7),
+            panel.grid.major = element_blank(),  #element_line(color = "grey96"),
+            panel.grid.minor = element_blank(),
+            aspect.ratio = aspect_ratio,
+            legend.position = "none")+
+      geom_text(data = centroids, aes(label = metadata), size = 3, color = "black", hjust = 0.5, vjust = 0.5)
+
+
+```
+
+
+```{r}
 # save.image(file= '/vast/scratch/users/liu.ne/paper_panels_2_backup.RData')
 # load('/vast/scratch/users/liu.ne/paper_panels_2_backup.RData')
 
 # saveRDS(adt_metrics, file = '/vast/scratch/users/liu.ne/adt_metrics_merged.RData')
+# saveRDS(list(rna_metrics = rna_metrics), file = '/vast/scratch/users/liu.ne/adt_metrics_merged.RData')
 
 ```
 
