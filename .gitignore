@@ -2,6 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+.future
 fastruv_env
 HouseKeepingGenes_RevisitedPaper.txt
 test.Rmd
+createPrPsByAnchors.R
+transformGamPoi_Paper_benchmark
