@@ -448,7 +448,7 @@ setMethod(
     obj@Adj_data[['ADTnorm']] <- ADTnorm::ADTnorm(
       cell_x_adt = as.matrix(t(obj@Raw_data)), 
       cell_x_feature = data.frame(sample = obj@Metadata[[batch_variable]]),
-      save_outpath = '/vast/scratch/users/liu.ne/')
+      save_outpath = '/home/nliu/scMultiOmics-normalization/data')
     obj@RunningTime[['ADTnorm']] <- difftime(Sys.time(), start, units = 'mins')
     obj@Adj_data[['ADTnorm']] <- obj@Adj_data[['ADTnorm']] %>% t()
     
