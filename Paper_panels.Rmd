@@ -16,9 +16,12 @@ library(Seurat)
 library(tidyr)
 library(ggplot2)
 library(gridExtra)
+library(anndataR)
 
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
 source("~/scMultiOmics-normalization/Sc_helper_functions.R")
+
+set.seed(42)
 
 ```
 
@@ -27,7 +30,9 @@ source("~/scMultiOmics-normalization/Sc_helper_functions.R")
 Stuart T, Butler A, Hoffman P, Hafemeister C, Papalexi E, Mauck WM 3rd, Hao Y, Stoeckius M, Smibert P, Satija R. 
 Comprehensive Integration of Single-Cell Data. Cell. 2019 Jun 13;177(7):1888-1902.e21. doi: 10.1016/j.cell.2019.05.031.
 ```{r}
-# SeuratData::InstallData("bmcite", destdir = '/vast/scratch/users/liu.ne')
+# Data needs to be downloaded first if not already downloaded from seurat.
+# options(timeout = 3600)  # make sure download doesn't get timeout killed
+# SeuratData::InstallData("bmcite", destdir = "/home/nliu/scMultiOmics-normalization/data")
 bm_data <- SeuratData::LoadData(ds = "bmcite")
 
 ```
@@ -89,7 +94,7 @@ colnames(rna_metrics@Raw_data) <- dimnames(bm_data@assays$RNA)[[2]]
 adt_metrics <- BenchmarkMetrics(
   Algorithm = c('Raw_counts', 'ADTnorm', 'CLR', 'DSB', 'Harmony_CLR', 
                 'totalVI', 'fastRUVIII_supervised', 'fastRUVIII_unsupervised'),
-  Raw_data = bm_data@assays$ADT@layers$counts, 
+  Raw_data = bm_data@assays$ADT@layers$counts,
   Metadata = bm_data@meta.data)
 rownames(adt_metrics@Raw_data) <- dimnames(bm_data@assays$ADT)[[1]]
 colnames(adt_metrics@Raw_data) <- dimnames(bm_data@assays$ADT)[[2]]
@@ -99,18 +104,24 @@ test <- SingleCellExperiment::SingleCellExperiment(assays = list(ADT = adt_metri
                              colData = bm_data@meta.data)
 test2 <- SingleCellExperiment::SingleCellExperiment(assays = list(RNA = rna_metrics@Raw_data),
                              colData = bm_data@meta.data)
-# Write H5
-zellkonverter::writeH5AD(test, file = '/vast/scratch/users/liu.ne/ADT.h5ad')
-zellkonverter::writeH5AD(test2, file = '/vast/scratch/users/liu.ne/RNA.h5ad')
+
+# Write H5 file for reading in python
+anndataR::write_h5ad(test, path = "/home/nliu/scMultiOmics-normalization/data/ADT.h5ad")
+anndataR::write_h5ad(test2, path = "/home/nliu/scMultiOmics-normalization/data/RNA.h5ad")
 rm(test)
 rm(test2)
+gc()
 
 # Run all other methods for RNA and ADT
+# Can also start the totalVI computation in the other markdown file now
+# This might take some considerable time and memory
 rna_metrics <- NormalizeRNA(
   rna_metrics, batch_variable = 'donor', num_pcs = 30)
 
 adt_metrics <- NormalizeADT(
   adt_metrics, batch_variable = 'donor', num_pcs = 13)
+
+gc()
 
 ```
 
@@ -372,18 +383,34 @@ gridExtra::grid.arrange(p1, p2,p3,p4, ncol = 4)
 
 
 
+# Backup workspace data
 ```{r}
-# save.image(file= '/vast/scratch/users/liu.ne/paper_panels_backup.RData')
-# load('/vast/scratch/users/liu.ne/paper_panels_backup.RData')
-
-# saveRDS(adt_metrics, file = '/vast/scratch/users/liu.ne/adt_metrics.RData')
-# saveRDS(rna_metrics, file = '/vast/scratch/users/liu.ne/rna_metrics.RData')
+# Save as qs2 obj
+workspace <- mget(ls(envir = .GlobalEnv), envir = .GlobalEnv)
+qs2::qs_save(workspace, "/home/nliu/scMultiOmics-normalization/data/panel1_backup.qs2")
+rm(workspace)
+gc()
 
 ```
 
 
+# Clean up global environment
+```{r}
+rm(list = ls(envir = .GlobalEnv))
+gc()
+
+```
 
 
+# Reload workspace data
+```{r}
+
+workspace <- qs2::qs_read("/home/nliu/scMultiOmics-normalization/data/panel1_backup.qs2")
+list2env(workspace, envir = .GlobalEnv)
+rm(workspace)
+gc()
+
+```
 
 
 
