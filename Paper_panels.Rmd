@@ -199,8 +199,23 @@ plot_vector_correlation(
 
 # Add totalVI data after we have the totalVI results
 ```{r}
-totalVI_adt <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_adt.h5ad')
-totalVI_rna <- zellkonverter::readH5AD('/vast/scratch/users/liu.ne/totalVI_rna.h5ad')
+
+# python's anndata recently switched to using nullable string arrays, which the conversion packages doesn't yet support
+# this is currently not working 
+totalVI_adt <- anndataR::read_h5ad(
+  "/home/nliu/scMultiOmics-normalization/data/totalVI_adt.h5ad",
+  as = "SingleCellExperiment")
+totalVI_rna <- anndataR::read_h5ad(
+  "/home/nliu/scMultiOmics-normalization/data/totalVI_rna.h5ad",
+  as = "SingleCellExperiment")
+
+# totalVI_adt <- zellkonverter::readH5AD(
+#   "/home/nliu/scMultiOmics-normalization/data/totalVI_adt.h5ad",
+#   as = "SingleCellExperiment")
+# totalVI_rna <- zellkonverter::readH5AD(
+#   "/home/nliu/scMultiOmics-normalization/data/totalVI_rna.h5ad",
+#   as = "SingleCellExperiment")
+
 rna_metrics <- add_totalVI(rna_metrics, totalVI_rna, assay_name = 'rna_normalized', pca = T)
 adt_metrics <- add_totalVI(adt_metrics, totalVI_adt, assay_name = 'adt_normalized', pcs = 13)
 
