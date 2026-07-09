@@ -41,9 +41,19 @@ bm_data <- merged_data
 
 
 # DATA SETUP
-```{r}
 
-triana_2021 <- readRDS(file = '/vast/scratch/users/liu.ne/41038073')
+# Triana et al 2021 
+# https://doi.org/10.6084/m9.figshare.13397987.v4
+```{r}
+# Download data from figshare if not already downloaded
+# options(timeout = 3600)  # make sure download doesn't get timeout killed
+download.file(
+   url = "https://ndownloader.figshare.com/files/41038073",
+   destfile = "/home/nliu/scMultiOmics-normalization/data/41038073.rds",
+   mode = "wb")
+
+triana_2021 <- readRDS(file = '/home/nliu/scMultiOmics-normalization/data/41038073.rds')
+
 
 DefaultAssay(triana_2021) <- 'RNA'
 triana_2021 <- NormalizeData(triana_2021) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA(reduction.name='rna_pca')
