@@ -19,6 +19,9 @@ library(gridExtra)
 devtools::source_url('https://raw.githubusercontent.com/Neal-Liu1/Multi-omics-integration/main/Helper_functions.R')
 source("~/scMultiOmics-normalization/Sc_helper_functions.R")
 
+# Seurat's parallelization needs to be increased to prevent crashing
+options(future.globals.maxSize = 2 * 1024^3)  # 4 GB
+
 ```
 
 # Import Stuart et al's bone marrow CITE-seq
@@ -28,14 +31,11 @@ Comprehensive Integration of Single-Cell Data. Cell. 2019 Jun 13;177(7):1888-190
 doi: 10.1016/j.cell.2019.05.031.
 ```{r}
 # SeuratData::InstallData("bmcite", destdir = '/vast/scratch/users/liu.ne')
-merged_data <- readRDS('/vast/scratch/users/liu.ne/combined_seurat.rds')
-bm_data <- merged_data
+#merged_data <- readRDS('/vast/scratch/users/liu.ne/combined_seurat.rds')
+#bm_data <- merged_data
+bm_data <- SeuratData::LoadData(ds = "bmcite")
 
 ```
-
-
-
-
 
 
 
@@ -47,10 +47,10 @@ bm_data <- merged_data
 ```{r}
 # Download data from figshare if not already downloaded
 # options(timeout = 3600)  # make sure download doesn't get timeout killed
-download.file(
-   url = "https://ndownloader.figshare.com/files/41038073",
-   destfile = "/home/nliu/scMultiOmics-normalization/data/41038073.rds",
-   mode = "wb")
+# download.file(
+#    url = "https://ndownloader.figshare.com/files/41038073",
+#    destfile = "/home/nliu/scMultiOmics-normalization/data/41038073.rds",
+#    mode = "wb")
 
 triana_2021 <- readRDS(file = '/home/nliu/scMultiOmics-normalization/data/41038073.rds')
 
@@ -80,7 +80,7 @@ common_genes <- intersect(rownames(bm_data@assays$RNA)[bm_genes_to_keep] ,rownam
 ## Do SCTransform first on both datasets before label transfer
 ```{r}
 
-bm_data2 <- CreateSeuratObject(counts = bm_data1@assays$RNA@layers$counts[rownames(bm_data@assays$RNA) %in% common_genes,])
+bm_data2 <- CreateSeuratObject(counts = bm_data@assays$RNA@layers$counts[rownames(bm_data@assays$RNA) %in% common_genes,])
 rownames(bm_data2) <- rownames(bm_data@assays$RNA)[rownames(bm_data@assays$RNA) %in% common_genes]
 bm_data2 <- Seurat::SCTransform(bm_data2)
 bm_data2 <- FindVariableFeatures(bm_data2)
@@ -121,7 +121,7 @@ hist(predicted_celltypes2$prediction.score.max, main = 'Max predict. scores for 
 
 # Deal with metadata shenanigans
 bm_data2$study <- 'Stuart_2019'
-triana_2021_2@assays$ADT@key <- 'adt_'
+#triana_2021_2@assays$ADT@key <- 'adt_'
 triana_2021_2$study <- 'Triana_2021'
 bm_data2$supplied_celltype_l2 <- as.vector(bm_data$celltype.l2)
 triana_2021_2$supplied_celltype_l2 <- as.vector(triana_2021$ct)
@@ -133,53 +133,75 @@ merged_data <- merge(bm_data2, triana_2021_2)
 
 ```
 
+## Add ADT data
+```{r}
 
+# Subset to common adts and then concat the count matrix
 
+common_adts <- intersect(sub("-AB$", "", rownames(triana_2021@assays$AB)), rownames(bm_data@assays$ADT))
+triana_2021_2@assays$ADT <- CreateAssay5Object(counts = triana_2021@assays$AB@counts)
+rownames(triana_2021_2@assays$ADT) <- sub("-AB$", "", rownames(triana_2021@assays$AB))
 
+combined_matrix <- cbind(bm_data@assays$ADT@layers$counts[match(common_adts, rownames(bm_data@assays$ADT)),],
+                         triana_2021_2@assays$ADT@layers$counts[match(common_adts, rownames(triana_2021_2@assays$ADT)),])
 
+rownames(combined_matrix) <- common_adts
+colnames(combined_matrix) <- colnames(merged_data)
 
+combined_adt_assay <- CreateAssay5Object(counts = combined_matrix)
+combined_adt_assay <- NormalizeData(combined_adt_assay, normalization.method = 'CLR', margin = 2)
 
+merged_data[['ADT']] <- combined_adt_assay
 
+```
 
+# Seurat's default merge doesnt store one matrix but two counts matrices so we'll merge it manually 
+```{r}
+merged_counts <- cbind(merged_data@assays$RNA@layers$counts.1, merged_data@assays$RNA@layers$counts.2)
+colnames(merged_counts) <- colnames(merged_data)
+rownames(merged_counts) <- rownames(merged_data@assays$RNA)
+merged_data$log2_libsize <- log2(colSums(merged_counts))
+merged_counts_assay <- SeuratObject::CreateAssay5Object(counts = merged_counts, key = 'rna_')
+merged_data[['RNA']] <- merged_counts_assay
 
+```
 
 
 
 # Run the other normalization methods for RNA and ADT
 ```{r}
-bm_data$log2_rna_libsize <- log2(colSums(bm_data@assays$RNA@layers$counts))
-bm_data$log2_adt_libsize <- log2(colSums(bm_data@assays$ADT@layers$counts))
+merged_data$log2_rna_libsize <- log2(colSums(merged_data@assays$RNA@layers$counts))
+merged_data$log2_adt_libsize <- log2(colSums(merged_data@assays$ADT@layers$counts))
 
-"
-genes_to_keep <- Seurat::FindVariableFeatures(
-  as.matrix(bm_data@assays$RNA@layers$counts), nfeatures = 8000, 
-  selection.method = 'vst')[['variable']]
-"
+# genes_to_keep <- Seurat::FindVariableFeatures(
+#   as.matrix(bm_data@assays$RNA@layers$counts), nfeatures = 8000, 
+#   selection.method = 'vst')[['variable']]
+
 rna_metrics <- BenchmarkMetrics(
   Algorithm = c('Raw_counts', 'Seurat_LogNormalize', 'SCTransform','Seurat_rPCA',
                 'Harmony_LogNormalize','fastMNN', 'totalVI', 
                 'fastRUVIII_supervised', 'fastRUVIII_unsupervised'), 
-  Raw_data = bm_data@assays$RNA@layers$counts, 
-  Metadata = bm_data@meta.data)
-rownames(rna_metrics@Raw_data) <- dimnames(bm_data@assays$RNA)[[1]]
-colnames(rna_metrics@Raw_data) <- dimnames(bm_data@assays$RNA)[[2]]
+  Raw_data = merged_data@assays$RNA@layers$counts, 
+  Metadata = merged_data@meta.data)
+rownames(rna_metrics@Raw_data) <- dimnames(merged_data@assays$RNA)[[1]]
+colnames(rna_metrics@Raw_data) <- dimnames(merged_data@assays$RNA)[[2]]
 
 adt_metrics <- BenchmarkMetrics(
   Algorithm = c('Raw_counts', 'ADTnorm', 'CLR', 'DSB', 'Harmony_CLR', 
                 'totalVI', 'fastRUVIII_supervised', 'fastRUVIII_unsupervised'),
-  Raw_data = bm_data@assays$ADT@layers$counts, 
-  Metadata = bm_data@meta.data)
-rownames(adt_metrics@Raw_data) <- dimnames(bm_data@assays$ADT)[[1]]
-colnames(adt_metrics@Raw_data) <- dimnames(bm_data@assays$ADT)[[2]]
+  Raw_data = merged_data@assays$ADT@layers$counts, 
+  Metadata = merged_data@meta.data)
+rownames(adt_metrics@Raw_data) <- dimnames(merged_data@assays$ADT)[[1]]
+colnames(adt_metrics@Raw_data) <- dimnames(merged_data@assays$ADT)[[2]]
 
 # totalVI python conversion shenanigans
 test <- SingleCellExperiment::SingleCellExperiment(assays = list(ADT = adt_metrics@Raw_data),
-                             colData = bm_data@meta.data)
+                             colData = merged_data@meta.data)
 test2 <- SingleCellExperiment::SingleCellExperiment(assays = list(RNA = rna_metrics@Raw_data),
-                             colData = bm_data@meta.data)
+                             colData = merged_data@meta.data)
 # Write H5
-zellkonverter::writeH5AD(test, file = '/vast/scratch/users/liu.ne/ADT_merged.h5ad')
-zellkonverter::writeH5AD(test2, file = '/vast/scratch/users/liu.ne/RNA_merged.h5ad')
+anndataR::write_h5ad(test, path = "/home/nliu/scMultiOmics-normalization/data/ADT_merged.h5ad")
+anndataR::write_h5ad(test, path = "/home/nliu/scMultiOmics-normalization/data/RNA_merged.h5ad")
 rm(test)
 rm(test2)
 
@@ -843,6 +865,34 @@ ggplot(df, aes(x = UMAP1, y = UMAP2, color = metadata)) +
 
 
 
+# Backup workspace data
+```{r}
+# Save as qs2 obj
+workspace <- mget(ls(envir = .GlobalEnv), envir = .GlobalEnv)
+qs2::qs_save(workspace, "/home/nliu/scMultiOmics-normalization/data/panel2_backup.qs2")
+rm(workspace)
+gc()
+
+```
+
+
+# Clean up global environment
+```{r}
+rm(list = ls(envir = .GlobalEnv))
+gc()
+
+```
+
+
+# Reload workspace data
+```{r}
+
+workspace <- qs2::qs_read("/home/nliu/scMultiOmics-normalization/data/panel2_backup.qs2")
+list2env(workspace, envir = .GlobalEnv)
+rm(workspace)
+gc()
+
+```
 
 
 
